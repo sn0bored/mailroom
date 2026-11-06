@@ -50,10 +50,10 @@ class DraftsController < ApplicationController
     if params[:message_id].present?
       source = Message.find(params[:message_id])
       draft.assign_attributes(kind: "reply", source_message: source, from_address: source.to_address,
-        to_addresses: [source.reply_to.presence || source.from_address],
+        to_addresses: [ source.reply_to.presence || source.from_address ],
         subject: source.subject.to_s.match?(/\ARe:/i) ? source.subject : "Re: #{source.subject}",
         in_reply_to: source.rfc822_message_id,
-        references_header: [source.references_header, source.rfc822_message_id].compact.join(" "),
+        references_header: [ source.references_header, source.rfc822_message_id ].compact.join(" "),
         text_body: "\n" + source.body_text.to_s.split("\n", -1).map { |line| "> #{line}" }.join("\n"))
     end
     draft

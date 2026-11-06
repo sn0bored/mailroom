@@ -1,7 +1,7 @@
 class OutboundDeliveryJob < ApplicationJob
-  TRANSPORT_ERRORS = [Postmark::HttpClientError, Postmark::InternalServerError,
+  TRANSPORT_ERRORS = [ Postmark::HttpClientError, Postmark::InternalServerError,
     Postmark::UnexpectedHttpResponseError, Postmark::TimeoutError,
-    Timeout::Error, SocketError, IOError, SystemCallError].freeze
+    Timeout::Error, SocketError, IOError, SystemCallError ].freeze
 
   retry_on(*TRANSPORT_ERRORS, wait: 5.seconds, attempts: 3) do |job, error|
     job.mark_failed(OutboundMessage.find(job.arguments.first), error)

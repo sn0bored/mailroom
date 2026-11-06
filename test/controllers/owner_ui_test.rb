@@ -24,7 +24,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     Message.create!({ inbound_email: inbound, domain: @domain, received_at: Time.current,
       from_address: "sender@example.net", to_address: "inbox@example.org", subject: "A sample message",
       body_text: "Hello\n<script>alert('mail')</script>", snippet: "A short preview", routed_via: "original_to",
-      matched_addresses: ["inbox@example.org"], rfc822_message_id: "<source@example.net>" }.merge(attributes))
+      matched_addresses: [ "inbox@example.org" ], rfc822_message_id: "<source@example.net>" }.merge(attributes))
   end
 
   def draft_attributes
@@ -33,7 +33,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
 
   def create_draft(**attributes)
     OutboundMessage.create!({ kind: "reply", status: "draft", user: @user,
-      from_address: "owner@example.org", to_addresses: ["recipient@example.net"], subject: "Draft", text_body: "Text" }.merge(attributes))
+      from_address: "owner@example.org", to_addresses: [ "recipient@example.net" ], subject: "Draft", text_body: "Text" }.merge(attributes))
   end
 
   test "all owner pages require a session" do
@@ -328,7 +328,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to domain_path(@domain)
       assert_equal "Probe queued.", flash[:notice]
     end
-    [NotImplementedError, Outbound::Send::NotAllowed].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
       Outbound::Probe.stub(:call, ->(*) { raise error, "Probe unavailable" }) do
         post probe_domain_path(@domain)
         assert_redirected_to domain_path(@domain)
@@ -388,7 +388,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to draft_path(draft)
       assert_equal "Message queued for sending.", flash[:notice]
     end
-    [NotImplementedError, Outbound::Send::NotAllowed].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
       Outbound::Send.stub(:call, ->(*) { raise error, "Sending unavailable" }) do
         post deliver_draft_path(draft)
         assert_redirected_to draft_path(draft)
@@ -415,7 +415,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     get new_api_key_path
     assert_response :ok
     assert_select "input[type=checkbox]", ApiKey::SCOPES.length
-    post api_keys_path, params: { api_key: { name: "Reader", scopes: ["mail:read"], allowed_from_domains: "example.org, example.net" } }
+    post api_keys_path, params: { api_key: { name: "Reader", scopes: [ "mail:read" ], allowed_from_domains: "example.org, example.net" } }
     assert_response :created
     token = css_select("pre.token").first.text.strip
     key = ApiKey.authenticate(token)
@@ -432,7 +432,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     end
     assert key.reload.revoked_at
     assert_nil ApiKey.authenticate(token)
-    post api_keys_path, params: { api_key: { name: "Invalid", scopes: ["unknown"] } }
+    post api_keys_path, params: { api_key: { name: "Invalid", scopes: [ "unknown" ] } }
     assert_response :unprocessable_entity
   end
 

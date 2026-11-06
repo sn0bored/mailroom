@@ -84,9 +84,9 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     delivery = ActionMailer::Base.deliveries.last
     assert_equal "sent", @record.reload.forward_status
     assert_equal "[example.org] Original", delivery.subject
-    assert_equal ["sender@example.net"], delivery.reply_to
-    assert_equal ["owner@example.net"], delivery.to
-    assert_equal ["forward@example.org"], delivery.from
+    assert_equal [ "sender@example.net" ], delivery.reply_to
+    assert_equal [ "owner@example.net" ], delivery.to
+    assert_equal [ "forward@example.org" ], delivery.from
     assert_equal Mailroom.instance_id, delivery["X-Mailroom-Instance"].value
     assert_equal @record.id.to_s, delivery["X-Mailroom-Message-Id"].value
     assert_equal "inbox@example.org", delivery["X-Mailroom-Original-To"].value

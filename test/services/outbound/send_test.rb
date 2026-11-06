@@ -7,12 +7,12 @@ class OutboundSendTest < ActiveSupport::TestCase
 
   setup do
     @domain = Domain.create!(name: "example.org", send_enabled: true)
-    @record = OutboundMessage.create!(from_address: "sender@example.org", to_addresses: ["recipient@example.net"])
+    @record = OutboundMessage.create!(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
   end
 
   test "draft and queued messages can be enqueued" do
     2.times do
-      assert_enqueued_with(job: OutboundDeliveryJob, args: [@record.id]) { assert_equal @record, Outbound::Send.call(@record) }
+      assert_enqueued_with(job: OutboundDeliveryJob, args: [ @record.id ]) { assert_equal @record, Outbound::Send.call(@record) }
       assert_equal "queued", @record.reload.status
     end
   end
@@ -29,18 +29,18 @@ class OutboundSendTest < ActiveSupport::TestCase
   end
 
   test "key domain restriction is enforced" do
-    key, = ApiKey.generate(name: "Test", scopes: ["mail:send"], allowed_from_domains: ["example.net"])
+    key, = ApiKey.generate(name: "Test", scopes: [ "mail:send" ], allowed_from_domains: [ "example.net" ])
     @record.api_key = key
     assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(@record) }
-    key.update!(allowed_from_domains: ["example.org"])
+    key.update!(allowed_from_domains: [ "example.org" ])
     Outbound::Send.call(@record)
     assert_equal "queued", @record.status
   end
 
   test "empty recipients and sent or failed messages are denied" do
-    @record.to_addresses = [""]
+    @record.to_addresses = [ "" ]
     assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(@record) }
-    @record.to_addresses = ["recipient@example.net"]
+    @record.to_addresses = [ "recipient@example.net" ]
     %w[sent failed].each do |status|
       @record.status = status
       assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(@record) }
@@ -59,7 +59,7 @@ class OutboundSendTest < ActiveSupport::TestCase
       perform_enqueued_jobs(only: OutboundDeliveryJob) do
         record = Outbound::Probe.call(target)
         assert_equal "probe", record.kind
-        assert_equal [target.probe_address], record.to_addresses
+        assert_equal [ target.probe_address ], record.to_addresses
         assert_equal "Mailroom probe for example.net", record.subject
         assert_equal "sent", record.reload.status
         assert_equal Mailroom.forward_stream, ActionMailer::Base.deliveries.last.message_stream

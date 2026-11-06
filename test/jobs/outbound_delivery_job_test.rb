@@ -7,9 +7,9 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
 
   setup do
     ActionMailer::Base.deliveries.clear
-    @key, = ApiKey.generate(name: "Test", scopes: ["mail:send"])
+    @key, = ApiKey.generate(name: "Test", scopes: [ "mail:send" ])
     @record = OutboundMessage.create!(api_key: @key, status: "queued", from_address: "sender@example.org",
-      to_addresses: ["recipient@example.net"], cc_addresses: ["copy@example.net"], bcc_addresses: ["blind@example.net"],
+      to_addresses: [ "recipient@example.net" ], cc_addresses: [ "copy@example.net" ], bcc_addresses: [ "blind@example.net" ],
       text_body: "Plain body", html_body: "<p>HTML body</p>", subject: "Subject",
       reply_to: "reply@example.org", in_reply_to: "<parent@example.org>", references_header: "<ancestor@example.org>")
   end
@@ -24,9 +24,9 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
     assert_equal @record.id.to_s, delivery["X-Mailroom-Message-Id"].value
     assert_equal "parent@example.org", delivery.in_reply_to
     assert_equal "ancestor@example.org", delivery.references
-    assert_equal ["reply@example.org"], delivery.reply_to
-    assert_equal ["copy@example.net"], delivery.cc
-    assert_equal ["blind@example.net"], delivery.bcc
+    assert_equal [ "reply@example.org" ], delivery.reply_to
+    assert_equal [ "copy@example.net" ], delivery.cc
+    assert_equal [ "blind@example.net" ], delivery.bcc
     assert_equal "Plain body", delivery.text_part.decoded
     assert_equal "<p>HTML body</p>", delivery.html_part.decoded
     audit = AuditEvent.find_by!(action: "outbound.sent", target_id: @record.id)

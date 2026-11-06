@@ -6,7 +6,7 @@ class MessagesController < ApplicationController
     @unread_counts = MessageQuery.new(filters.except("domain", "unrouted", "unread", "q"))
       .resolve.except(:limit, :order).unread.group(:domain_id).count
     @group_by_domain = params[:group] != "none"
-    @page = [params[:page].to_i, 1].max
+    @page = [ params[:page].to_i, 1 ].max
     rows = scope.includes(:domain).newest_first.offset((@page - 1) * 50).limit(51).to_a
     @has_next = rows.length > 50
     @messages = rows.first(50)
