@@ -13,7 +13,7 @@ module Mailroom
 
   def self.public_host = ENV["MAILROOM_PUBLIC_HOST"].presence
   def self.serve_host = ENV["MAILROOM_SERVE_HOST"].presence
-  def self.forward_sender = ENV["MAILROOM_FORWARD_SENDER"].presence
+  def self.forward_sender = ENV["MAILROOM_FORWARD_SENDER"].presence || Setting.get("forward_sender").presence
   def self.forward_stream = ENV.fetch("MAILROOM_FORWARD_STREAM", "outbound")
   def self.default_forward_to = ENV["MAILROOM_DEFAULT_FORWARD_TO"].presence
   def self.trust_local? = ENV["MAILROOM_TRUST_LOCAL"] == "1"
