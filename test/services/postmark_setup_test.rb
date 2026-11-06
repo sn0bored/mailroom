@@ -10,11 +10,20 @@ class PostmarkSetupTest < ActiveSupport::TestCase
 
   test "configure points the webhook at us and stores the inbound hash" do
     client = FakeClient.new
-    result = PostmarkSetup.new(token: "t", client: client).configure!(public_host: "mailroom.example.ts.net", password: "pw")
-    assert_equal "https://actionmailbox:pw@mailroom.example.ts.net/rails/action_mailbox/postmark/inbound_emails", client.updates.first[:inbound_hook_url]
+    result = PostmarkSetup.new(token: "t", client: client).configure!(public_host: "mailroom.example.org", password: "pw")
+    assert_equal "https://actionmailbox:pw@mailroom.example.org/rails/action_mailbox/postmark/inbound_emails", client.updates.first[:inbound_hook_url]
     assert client.updates.first[:raw_email_enabled]
+    assert_equal 15.0, client.updates.first[:inbound_spam_threshold]
     assert_equal "abc123hash@inbound.postmarkapp.com", result[:inbound_address]
     assert_equal "42", Setting.get("postmark_server_id")
+  end
+
+  test "configure sends the saved inbound spam threshold as a float" do
+    Setting.set("inbound_spam_threshold", "12.5")
+    client = FakeClient.new
+    PostmarkSetup.new(token: "t", client: client).configure!(public_host: "mailroom.example.org", password: "pw")
+    assert_equal 12.5, client.updates.first[:inbound_spam_threshold]
+    assert_instance_of Float, client.updates.first[:inbound_spam_threshold]
   end
 
   test "configure refuses to run without the pieces it needs" do

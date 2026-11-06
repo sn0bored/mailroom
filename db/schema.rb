@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_11_06_032006) do
+ActiveRecord::Schema[8.0].define(version: 2026_11_06_040000) do
   create_table "action_mailbox_inbound_emails", force: :cascade do |t|
     t.integer "status", default: 0, null: false
     t.string "message_id", null: false
@@ -76,6 +76,13 @@ ActiveRecord::Schema[8.0].define(version: 2026_11_06_032006) do
     t.index ["created_at"], name: "index_audit_events_on_created_at"
   end
 
+  create_table "blocked_senders", force: :cascade do |t|
+    t.string "pattern", null: false
+    t.string "note"
+    t.datetime "created_at", null: false
+    t.index ["pattern"], name: "index_blocked_senders_on_pattern", unique: true
+  end
+
   create_table "domains", force: :cascade do |t|
     t.string "name", null: false
     t.boolean "active", default: true, null: false
@@ -88,6 +95,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_11_06_032006) do
     t.text "notes"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "forward_mode", default: "all", null: false
+    t.json "forward_addresses"
     t.index ["name"], name: "index_domains_on_name", unique: true
   end
 
@@ -119,6 +128,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_11_06_032006) do
     t.string "parse_error"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "blocked", default: false, null: false
     t.index ["domain_id", "received_at"], name: "index_messages_on_domain_id_and_received_at"
     t.index ["domain_id"], name: "index_messages_on_domain_id"
     t.index ["inbound_email_id"], name: "index_messages_on_inbound_email_id", unique: true

@@ -22,6 +22,7 @@ Rails.application.routes.draw do
     post :probe, on: :member
   end
   resources :messages, only: %i[index show update]
+  resources :blocked_senders, only: %i[index create destroy]
   get "messages/:message_id/attachments/:id", to: "attachments#show", as: :message_attachment
   resources :drafts, only: %i[index show new create update] do
     post :deliver, on: :member

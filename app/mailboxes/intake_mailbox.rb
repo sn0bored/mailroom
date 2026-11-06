@@ -17,6 +17,7 @@ class IntakeMailbox < ApplicationMailbox
     probe = probe?(message)
     # A probe is our own mail coming back on purpose; anything else carrying our instance header is a loop.
     message.routed_via = "loop" if loop? && !probe
+    message.blocked = BlockedSender.blocks?(message.from_address)
     message.save!
     builder.attach_to(message)
 
@@ -72,10 +73,13 @@ class IntakeMailbox < ApplicationMailbox
   end
 
   def forward_skip_reason(message, probe:)
+    return "blocked" if message.blocked?
     return "probe" if probe
     return "loop" if message.routed_via == "loop"
     return "unrouted" if message.domain.nil?
-    return "no_target" unless message.domain.forwarding?
+    return "no_target" if message.domain.forward_target.blank?
+    return "forward_off" if message.domain.forward_mode == "off"
+    return "not_listed" unless message.domain.forward_copy_for?(message)
     return "no_sender" if Mailroom.forward_sender.blank?
     return "no_provider" unless Mailroom.sending_configured?
     return "list" if message.list_mail

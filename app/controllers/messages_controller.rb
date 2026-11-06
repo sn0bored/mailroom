@@ -1,14 +1,16 @@
 class MessagesController < ApplicationController
   def index
-    scope = params[:archived] == "1" ? Message.archived : Message.inbox
-    scope = scope.joins(:domain).where(domains: { name: params[:domain] }) if params[:domain].present?
-    scope = scope.unrouted if params[:unrouted] == "1"
-    scope = scope.unread if params[:unread] == "1"
-    scope = scope.search(params[:q]) if params[:q].present?
+    filters = params.permit(:archived, :domain, :unrouted, :unread, :q, :blocked).to_h
+    scope = MessageQuery.new(filters).resolve.except(:limit)
+    @domains = Domain.order(:name)
+    @unread_counts = MessageQuery.new(filters.except("domain", "unrouted", "unread", "q"))
+      .resolve.except(:limit, :order).unread.group(:domain_id).count
+    @group_by_domain = params[:group] != "none"
     @page = [params[:page].to_i, 1].max
     rows = scope.includes(:domain).newest_first.offset((@page - 1) * 50).limit(51).to_a
     @has_next = rows.length > 50
     @messages = rows.first(50)
+    @message_groups = @messages.group_by(&:domain).sort_by { |domain, _| [ domain ? 0 : 1, domain&.name.to_s ] }
   end
 
   def show

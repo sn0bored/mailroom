@@ -20,6 +20,9 @@ class DomainsController < ApplicationController
 
   def show
     @messages = @domain.messages.newest_first.limit(10)
+    @message_count = @domain.messages.count
+    @forwarded_count = @domain.messages.where(forward_status: "sent").count
+    @skipped_counts = @domain.messages.where("forward_status LIKE ?", "skipped:%").group(:forward_status).count
     @probe = OutboundMessage.where(kind: "probe").newest_first.detect { |record| record.to_addresses.include?(@domain.probe_address) }
   end
 
@@ -46,6 +49,11 @@ class DomainsController < ApplicationController
   end
 
   def domain_params
-    params.require(:domain).permit(:name, :forward_copy_to, :send_enabled, :forward_copy_max_spam, :notes)
+    attributes = params.require(:domain).permit(:name, :forward_copy_to, :send_enabled,
+      :forward_copy_max_spam, :notes, :forward_mode, :forward_addresses)
+    if attributes.key?(:forward_addresses)
+      attributes[:forward_addresses] = attributes[:forward_addresses].to_s.lines.map { |line| line.strip.downcase }.reject(&:blank?).uniq
+    end
+    attributes
   end
 end

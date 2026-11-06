@@ -1,6 +1,9 @@
 require "test_helper"
+require_relative "../support/outbound_stubs"
 
 class IntakeMailboxTest < ActiveSupport::TestCase
+  using OutboundStubs
+  include ActionMailer::TestHelper
   setup do
     @domain = Domain.create!(name: "example.org", forward_copy_to: "owner@example.net")
     ENV["MAILROOM_FORWARD_SENDER"] = "mailroom@example.org"
@@ -33,6 +36,94 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_nil message.domain
     assert_equal "unrouted", message.routed_via
     assert_equal "skipped:unrouted", message.forward_status
+  end
+
+  test "all mode keeps forwarding unlisted addresses" do
+    @domain.update!(forward_mode: "all", forward_addresses: [ "other" ])
+    message = receive_source(forwarded_source)
+    assert_equal "queued", message.forward_status
+    assert_enqueued_with(job: ForwardCopyJob, args: [ message.id ])
+  end
+
+  test "listed mode accepts local parts and full addresses case insensitively" do
+    [ "HELLO", "Hello@Example.ORG" ].each_with_index do |address, index|
+      @domain.update!(forward_mode: "listed", forward_addresses: [ address ])
+      message = receive_source(forwarded_source.sub("sample-0001", "listed-#{index}"))
+      assert_equal "queued", message.forward_status
+      assert_enqueued_with(job: ForwardCopyJob, args: [ message.id ])
+    end
+  end
+
+  test "unlisted and off mail is stored without queuing copies" do
+    @domain.update!(forward_mode: "listed", forward_addresses: [ "other" ])
+    assert_no_enqueued_jobs(only: ForwardCopyJob) do
+      message = receive_source(forwarded_source)
+      assert_equal "skipped:not_listed", message.forward_status
+      @domain.update!(forward_mode: "off")
+      message = receive_source(forwarded_source.sub("sample-0001", "off-0001"))
+      assert_equal "skipped:forward_off", message.forward_status
+    end
+    assert_equal 2, @domain.messages.count
+  end
+
+  test "no target takes precedence over disabled forwarding" do
+    @domain.update!(forward_mode: "off", forward_copy_to: nil)
+    Mailroom.stub(:default_forward_to, nil) do
+      assert_equal "skipped:no_target", receive_source(forwarded_source).forward_status
+    end
+  end
+
+  test "blocked addresses and domains retain mail and routing without forwarding" do
+    [ "alice@sender.example.net", "sender.example.net" ].each_with_index do |pattern, index|
+      block = BlockedSender.create!(pattern: pattern)
+      assert_no_enqueued_jobs(only: ForwardCopyJob) do
+        message = receive_source(forwarded_source.sub("sample-0001", "blocked-#{index}"))
+        assert message.blocked?
+        assert_equal @domain, message.domain
+        assert_equal "hdr:X-Original-To", message.routed_via
+        assert_equal "skipped:blocked", message.forward_status
+        assert message.body_text.present?
+      end
+      block.destroy!
+    end
+  end
+
+  test "blocked unrouted mail is also retained and marked blocked" do
+    BlockedSender.create!(pattern: "sender.example.net")
+    @domain.destroy!
+    message = receive_source(forwarded_source)
+    assert message.blocked?
+    assert_equal "unrouted", message.routed_via
+    assert_equal "skipped:blocked", message.forward_status
+  end
+
+  test "forward throttle spans domains and expires an hour after the first copy" do
+    Domain.create!(name: "example.net", forward_copy_to: "owner@example.org")
+    cache = ActiveSupport::Cache::MemoryStore.new
+    start = Time.current.change(usec: 0)
+    Rails.stub(:cache, cache) do
+      travel_to start do
+        5.times do |index|
+          source = forwarded_source.sub("sample-0001", "throttle-#{index}")
+          source = source.gsub("hello@example.org", "hello@example.net") if index.odd?
+          message = receive_source(source)
+          assert_equal "queued", message.forward_status
+          assert_emails(1) { ForwardCopyJob.perform_now(message.id) }
+          assert_equal "sent", message.reload.forward_status
+        end
+      end
+      travel_to start + 30.minutes do
+        message = receive_source(forwarded_source.sub("sample-0001", "throttled"))
+        assert_no_emails { ForwardCopyJob.perform_now(message.id) }
+        assert_equal "skipped:throttled", message.reload.forward_status
+        assert message.body_text.present?
+      end
+      travel_to start + 1.hour do
+        message = receive_source(forwarded_source.sub("sample-0001", "after-expiry"))
+        assert_emails(1) { ForwardCopyJob.perform_now(message.id) }
+        assert_equal "sent", message.reload.forward_status
+      end
+    end
   end
 
   test "the same message arriving twice merges into one row" do

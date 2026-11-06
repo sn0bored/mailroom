@@ -1,4 +1,13 @@
 <h1><%= @domain.name %></h1>
+<dl class="domain-counts">
+  <dt>Messages</dt><dd><%= @message_count %></dd>
+  <dt>Forwarded</dt><dd><%= @forwarded_count %></dd>
+  <dt>Skipped</dt><dd><%= @skipped_counts.values.sum %>
+    <% if @skipped_counts.any? %><ul>
+      <% @skipped_counts.sort.each do |status, count| %><li><%= status.delete_prefix("skipped:") %>: <%= count %></li><% end %>
+    </ul><% end %>
+  </dd>
+</dl>
 <h2>Set up receiving</h2>
 <% if Mailroom.inbound_address.present? %>
 <p class="setup-line">Add a catch-all forwarder at your registrar: <code>*@<%= @domain.name %> -&gt; <%= Mailroom.inbound_address %></code></p>

@@ -21,4 +21,18 @@ class MessageQueryTest < ActiveSupport::TestCase
     assert_equal [ @unrouted ], MessageQuery.new({}).resolve.to_a
     assert_equal [ @routed ], MessageQuery.new({ archived: true }).resolve.to_a
   end
+
+  test "blocked mail is excluded unless the blocked filter is true" do
+    @routed.update!(blocked: true)
+    [ nil, false, "false", "0" ].each do |filter|
+      assert_equal [ @unrouted ], MessageQuery.new({ blocked: filter }).resolve.to_a
+    end
+    [ true, "true", "1", 1, "yes" ].each do |filter|
+      assert_equal [ @routed ], MessageQuery.new({ blocked: filter }).resolve.to_a
+    end
+    assert_empty MessageQuery.new({ blocked: true, domain: "example.net" }).resolve
+    @routed.archive!
+    assert_empty MessageQuery.new({ blocked: true }).resolve
+    assert_equal [ @routed ], MessageQuery.new({ blocked: true, archived: true }).resolve.to_a
+  end
 end
