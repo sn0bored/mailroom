@@ -1,0 +1,23 @@
+<%= link_to "Back to inbox", messages_path %>
+<h1><%= @message.subject.presence || "(No subject)" %></h1>
+<dl>
+  <dt>From</dt><dd><%= @message.display_from %></dd>
+  <dt>To</dt><dd><%= @message.to_address %></dd>
+  <dt>Received</dt><dd><%= display_time(@message.received_at) %></dd>
+  <dt>Domain</dt><dd><%= @message.domain&.name || "unrouted" %></dd>
+  <dt>Routed via</dt><dd><%= @message.routed_via %></dd>
+  <dt>Spam score</dt><dd><%= @message.spam_score || "Unavailable" %></dd>
+  <dt>Matched addresses</dt><dd><%= Array(@message.matched_addresses).join(", ") %></dd>
+</dl>
+<div class="actions">
+  <%= button_to(@message.read? ? "Mark unread" : "Mark read", message_path(@message), method: :patch, params: { read: @message.read? ? "0" : "1" }) %>
+  <%= button_to(@message.archived? ? "Unarchive" : "Archive", message_path(@message), method: :patch, params: { archived: @message.archived? ? "0" : "1" }) %>
+  <%= link_to "Reply", new_draft_path(message_id: @message.id), class: "button" %>
+</div>
+<pre class="body"><%= @message.body_text %></pre>
+<h2>Attachments</h2>
+<ul><% @message.attachments.each do |attachment| %>
+  <li><%= link_to attachment.filename.to_s, message_attachment_path(@message, attachment) %> (<%= attachment.byte_size %> bytes)</li>
+<% end %></ul>
+<% unless @message.attachments.attached? %><p>No attachments.</p><% end %>
+<details><summary>Raw headers</summary><pre class="body"><%= raw_headers(@message) %></pre></details>

@@ -1,0 +1,15 @@
+<h1>Inbox</h1>
+<%= form_with url: messages_path, method: :get, class: "filters" do |form| %>
+  <div><%= form.label :q, "Search" %><%= form.search_field :q, value: params[:q] %></div>
+  <div><%= form.label :domain, "Domain" %><%= form.select :domain, options_for_select(Domain.order(:name).pluck(:name), params[:domain]), include_blank: "All domains" %></div>
+  <% %w[unrouted unread archived].each do |filter| %>
+    <label class="check"><%= check_box_tag filter, "1", params[filter] == "1" %><%= filter.capitalize %></label>
+  <% end %>
+  <%= form.submit "Filter" %><%= link_to "Clear", messages_path %>
+<% end %>
+<%= render "list", messages: @messages %>
+<nav class="pagination" aria-label="Pages">
+  <% if @page > 1 %><%= link_to "Previous", messages_path(request.query_parameters.merge(page: @page - 1)) %><% end %>
+  <span>Page <%= @page %></span>
+  <% if @has_next %><%= link_to "Next", messages_path(request.query_parameters.merge(page: @page + 1)) %><% end %>
+</nav>

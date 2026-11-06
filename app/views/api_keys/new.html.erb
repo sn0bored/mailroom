@@ -1,0 +1,11 @@
+<h1>New API key</h1>
+<%= render "shared/errors", record: @api_key %>
+<%= form_with model: @api_key, class: "narrow", data: { turbo: false } do |form| %>
+<%= form.label :name %><%= form.text_field :name, required: true %>
+<fieldset><legend>Scopes</legend>
+<% ApiKey::SCOPES.each do |scope| %><label class="check"><%= check_box_tag "api_key[scopes][]", scope, @api_key.scopes.include?(scope), id: "scope_#{scope.tr(':', '_')}" %><%= scope %></label><% end %>
+</fieldset>
+<%= form.label :allowed_from_domains, "Allowed from domains (comma separated)" %>
+<%= form.text_field :allowed_from_domains, value: @api_key.allowed_from_domains.join(", "), placeholder: "example.org, example.net" %>
+<p>Leave domains blank to allow all owned domains.</p><%= form.submit "Create API key" %>
+<% end %>

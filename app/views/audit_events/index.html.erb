@@ -1,0 +1,5 @@
+<h1>Audit</h1><p>The latest 200 events.</p>
+<div class="table-scroll"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Error</th><th>IP</th><th>Duration</th></tr></thead><tbody>
+<% @events.each do |event| %><tr><td><%= display_time(event.created_at) %></td><td><%= event.actor_type %> <%= event.actor_id %></td>
+<td><%= event.action %></td><td><%= event.target_type %> <%= event.target_id %></td><td><%= event.outcome %></td><td><%= event.error_class %></td><td><%= event.ip %></td><td><%= event.duration_ms %> ms</td></tr><% end %>
+</tbody></table></div>

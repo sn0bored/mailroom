@@ -1,0 +1,10 @@
+<h1>Settings</h1>
+<dl><dt>Inbound address</dt><dd><%= Mailroom.inbound_address || "Not configured" %></dd>
+<dt>Forward sender</dt><dd><%= Mailroom.forward_sender || Setting.get("forward_sender").presence || "Not configured" %></dd>
+<dt>Instance ID</dt><dd><%= Mailroom.instance_id %></dd><dt>Version</dt><dd><%= Mailroom::VERSION %></dd></dl>
+<%= form_with url: settings_path, method: :patch, scope: :settings, class: "narrow" do |form| %>
+<%= form.label :default_forward_to, "Default forward to" %><%= form.email_field :default_forward_to, value: Setting.get("default_forward_to") %>
+<% if ENV["MAILROOM_FORWARD_SENDER"].blank? %>
+<%= form.label :forward_sender, "Forward sender" %><%= form.email_field :forward_sender, value: Setting.get("forward_sender") %>
+<% end %><%= form.submit "Save settings" %>
+<% end %>
