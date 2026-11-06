@@ -1,0 +1,9 @@
+<h1><%= @draft.subject.presence || "(No subject)" %></h1>
+<dl><dt>Status</dt><dd><%= @draft.status %></dd><dt>From</dt><dd><%= @draft.from_address %></dd>
+<dt>To</dt><dd><%= @draft.to_addresses.join(", ") %></dd>
+<% if @draft.sent? %><dt>Sent</dt><dd><%= display_time(@draft.sent_at) %></dd><% end %></dl>
+<pre class="body"><%= @draft.text_body %></pre>
+<% if @draft.draft? %>
+  <%= button_to "Send", deliver_draft_path(@draft) %>
+  <details <%= 'open' if @draft.errors.any? %>><summary>Edit</summary><%= render "form" %></details>
+<% end %>

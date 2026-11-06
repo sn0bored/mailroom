@@ -1,0 +1,6 @@
+<div class="row"><h1>Drafts</h1><%= link_to "New draft", new_draft_path, class: "button" %></div>
+<% @drafts.each do |draft| %><article class="message-row">
+<%= link_to draft.subject.presence || "(No subject)", draft_path(draft), class: "subject" %>
+<p>From <%= draft.from_address %> to <%= draft.to_addresses.join(", ") %></p><time><%= display_time(draft.created_at) %></time>
+</article><% end %>
+<% if @drafts.empty? %><p>No drafts yet.</p><% end %>

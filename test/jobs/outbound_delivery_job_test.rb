@@ -37,7 +37,7 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
   end
 
   test "failure stores class only" do
-    OutboundMailer.stub(:message, ->(*) { raise ArgumentError, "private body" }) do
+    OutboundMailer.stub(:compose, ->(*) { raise ArgumentError, "private body" }) do
       OutboundDeliveryJob.perform_now(@record.id)
     end
     assert_equal "failed", @record.reload.status
@@ -47,7 +47,7 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
 
   test "transport failures retry twice then fail" do
     attempts = 0
-    OutboundMailer.stub(:message, ->(*) { attempts += 1; raise Postmark::TimeoutError.new(StandardError.new("private")) }) do
+    OutboundMailer.stub(:compose, ->(*) { attempts += 1; raise Postmark::TimeoutError.new(StandardError.new("private")) }) do
       perform_enqueued_jobs(only: OutboundDeliveryJob) { OutboundDeliveryJob.perform_later(@record.id) }
     end
     assert_equal 3, attempts

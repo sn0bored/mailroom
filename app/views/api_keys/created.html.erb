@@ -1,0 +1,5 @@
+<% content_for :head do %><meta name="turbo-cache-control" content="no-cache"><% end %>
+<h1>API key created</h1>
+<p>Copy this token now. It will not be shown again.</p>
+<pre class="token"><%= @plaintext %></pre>
+<%= link_to "Back to API keys", api_keys_path %>

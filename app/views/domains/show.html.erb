@@ -1,0 +1,12 @@
+<h1><%= @domain.name %></h1>
+<h2>Set up receiving</h2>
+<% if Mailroom.inbound_address.present? %>
+<p class="setup-line">Add a catch-all forwarder at your registrar: <code>*@<%= @domain.name %> -&gt; <%= Mailroom.inbound_address %></code></p>
+<% else %><p class="setup-line">Run <code>bin/rails mailroom:postmark:configure</code> first to get your inbound address</p><% end %>
+<p>Or point an MX record for a subdomain at <%= Mailroom::POSTMARK_INBOUND_DOMAIN %>, priority 10, and set it as the server's inbound domain.</p>
+<%= button_to "Send me a probe", probe_domain_path(@domain) %>
+<dl><dt>Probe state</dt><dd><%= @probe&.status || "Not sent" %></dd>
+<dt>Probe sent</dt><dd><%= display_time(@probe&.sent_at) %></dd>
+<dt>Probe received</dt><dd><%= display_time(@domain.probe_received_at) %></dd></dl>
+<h2>Domain settings</h2><section class="narrow"><%= render "form" %></section>
+<h2>Recent messages</h2><%= render "messages/list", messages: @messages %>

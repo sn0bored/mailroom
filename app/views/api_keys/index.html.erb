@@ -1,0 +1,6 @@
+<div class="row"><h1>API keys</h1><%= link_to "New API key", new_api_key_path, class: "button" %></div>
+<div class="table-scroll"><table><thead><tr><th>Name</th><th>Label</th><th>Scopes</th><th>Allowed from domains</th><th>Last used</th><th>Revoked</th><th>Action</th></tr></thead><tbody>
+<% @api_keys.each do |key| %><tr><td><%= key.name %></td><td><code><%= key.label %></code></td><td><%= key.scopes.join(", ") %></td>
+<td><%= key.allowed_from_domains.presence&.join(", ") || "All owned domains" %></td><td><%= display_time(key.last_used_at) %></td><td><%= display_time(key.revoked_at) %></td>
+<td><%= button_to "Revoke", api_key_path(key), method: :delete if key.active? %></td></tr><% end %>
+</tbody></table></div>

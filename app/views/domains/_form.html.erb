@@ -1,0 +1,9 @@
+<%= render "shared/errors", record: @domain %>
+<%= form_with model: @domain do |form| %>
+  <%= form.label :name, "Domain name" %><%= form.text_field :name, required: true, placeholder: "example.org" %>
+  <%= form.label :forward_copy_to, "Forward copies to" %><%= form.email_field :forward_copy_to %>
+  <label class="check"><%= form.check_box :send_enabled %>Enable sending</label>
+  <%= form.label :forward_copy_max_spam, "Maximum spam score for forwarded copies" %><%= form.number_field :forward_copy_max_spam, step: "any", required: true %>
+  <%= form.label :notes %><%= form.text_area :notes, rows: 4 %>
+  <%= form.submit %>
+<% end %>

@@ -4,6 +4,7 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
   include ActiveJob::TestHelper
 
   setup do
+    host! "example.org:8443"
     @domain = Domain.create!(name: "example.org", send_enabled: true)
     @key, @token = ApiKey.generate(name: "Test", scopes: ["mail:send"], allowed_from_domains: ["example.org"])
     @payload = { from: "sender@example.org", to: "recipient@example.net", subject: "Test", text: "Body" }

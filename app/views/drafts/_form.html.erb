@@ -1,0 +1,9 @@
+<%= render "shared/errors", record: @draft %>
+<%= form_with model: @draft, scope: :draft, url: @draft.persisted? ? draft_path(@draft) : drafts_path do |form| %>
+  <%= hidden_field_tag :message_id, @draft.source_message_id if @draft.source_message_id %>
+  <%= form.label :from_address, "From" %><%= form.email_field :from_address, required: true %>
+  <%= form.label :to, "To (comma separated)" %><%= form.text_field :to, value: @draft.to_addresses.join(", "), required: true %>
+  <%= form.label :subject %><%= form.text_field :subject %>
+  <%= form.label :text_body, "Message" %><%= form.text_area :text_body, rows: 14 %>
+  <%= form.submit "Save draft" %>
+<% end %>
