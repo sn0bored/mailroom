@@ -1,9 +1,13 @@
 module Outbound
-  # Sends probe-<token>@domain through the configured sender so the owner can prove a domain receives.
-  # Implemented in the outbound chunk; this stub fixes the interface the UI calls.
   class Probe
     def self.call(domain, actor: nil)
-      raise NotImplementedError, "Outbound::Probe is implemented in the outbound chunk"
+      raise Send::NotAllowed, "no sender configured" if Mailroom.forward_sender.blank?
+
+      record = OutboundMessage.create!(kind: "probe", status: "draft",
+        from_address: Mailroom.forward_sender, to_addresses: [domain.probe_address],
+        subject: "Mailroom probe for #{domain.name}",
+        text_body: "This message proves that the domain's forwarder works. It can be ignored.")
+      Send.call(record, actor: actor)
     end
   end
 end
