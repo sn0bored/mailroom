@@ -1,6 +1,10 @@
-<div class="row"><h1>Drafts</h1><%= link_to "New draft", new_draft_path, class: "button" %></div>
-<% @drafts.each do |draft| %><article class="message-row">
-<%= link_to draft.subject.presence || "(No subject)", draft_path(draft), class: "subject" %>
-<p>From <%= draft.from_address %> to <%= draft.to_addresses.join(", ") %></p><time><%= display_time(draft.created_at) %></time>
-</article><% end %>
-<% if @drafts.empty? %><p>No drafts yet.</p><% end %>
+<%= render "shared/page_header", title: "Drafts", description: "#{pluralize(@drafts.size, 'draft')} ready to pick up", action_label: "New draft", action_path: new_draft_path %>
+<% if @drafts.any? %>
+<div class="table-scroll"><table><thead><tr><th>Subject</th><th>From</th><th>To</th><th>Created</th></tr></thead><tbody>
+<% @drafts.each do |draft| %><tr>
+  <td data-label="Subject"><%= link_to draft.subject.presence || "(No subject)", draft_path(draft), class: "subject" %></td>
+  <td data-label="From"><%= draft.from_address %></td><td data-label="To"><%= draft.to_addresses.join(", ") %></td>
+  <td data-label="Created"><time datetime="<%= draft.created_at.iso8601 %>" title="<%= display_time(draft.created_at) %>"><%= relative_time(draft.created_at) %></time></td>
+</tr><% end %>
+</tbody></table></div>
+<% else %><section class="empty panel"><h2>No drafts yet.</h2><p>Start a message now and send it when you are ready.</p><%= link_to "New draft", new_draft_path, class: "button secondary" %></section><% end %>

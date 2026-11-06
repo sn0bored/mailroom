@@ -1,5 +1,8 @@
 <% content_for :head do %><meta name="turbo-cache-control" content="no-cache"><% end %>
-<h1>API key created</h1>
-<p>Copy this token now. It will not be shown again.</p>
-<pre class="token"><%= @plaintext %></pre>
-<%= link_to "Back to API keys", api_keys_path %>
+<%= render "shared/page_header", title: "API key created", description: "Your key is ready to use." %>
+<section class="secret-callout panel" aria-labelledby="save-key-heading">
+  <h2 id="save-key-heading">Save your key now</h2>
+  <p class="warning">Copy this token now. It will not be shown again. Store it securely and treat it like a password.</p>
+  <%= render "shared/copy", id: "api-key-token", value: @plaintext, token: true, label: "Copy API key" %>
+</section>
+<p class="section-heading"><%= link_to "Back to API keys", api_keys_path %></p>

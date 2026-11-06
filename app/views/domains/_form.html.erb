@@ -11,9 +11,12 @@
     <%= form.text_area :forward_addresses, value: Array(@domain.forward_addresses).join("\n"), rows: 4, aria: { describedby: "forward-addresses-help" } %>
     <p id="forward-addresses-help">One per line, as a local part or full address, such as hello or hello@example.org. Matching uses the local part, ignoring case.</p>
   </fieldset>
-  <%= form.label :forward_copy_to, "Forward copies to" %><%= form.email_field :forward_copy_to %>
-  <label class="check"><%= form.check_box :send_enabled %>Enable sending</label>
-  <%= form.label :forward_copy_max_spam, "Maximum spam score for forwarded copies" %><%= form.number_field :forward_copy_max_spam, step: "any", required: true %>
+  <%= form.label :forward_copy_to, "Forward copies to" %><%= form.email_field :forward_copy_to, aria: { describedby: "forward-target-help" } %>
+  <p id="forward-target-help" class="help">Leave blank to use the default destination in Settings.</p>
+  <label class="check"><%= form.check_box :send_enabled %>Enable sending from this domain</label>
+  <p class="help">Allow drafts and authorized API keys to send from this domain.</p>
+  <%= form.label :forward_copy_max_spam, "Maximum spam score for forwarded copies" %><%= form.number_field :forward_copy_max_spam, step: "any", required: true, aria: { describedby: "spam-ceiling-help" } %>
+  <p id="spam-ceiling-help" class="help">Messages at or above this score stay in your inbox without a forwarded copy.</p>
   <%= form.label :notes %><%= form.text_area :notes, rows: 4 %>
   <%= form.submit %>
 <% end %>

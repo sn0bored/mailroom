@@ -1,0 +1,5 @@
+<header class="page-header">
+  <div><% if local_assigns[:eyebrow] %><p class="eyebrow"><%= eyebrow %></p><% end %><h1><%= title %></h1>
+  <% if local_assigns[:description] %><p class="page-description"><%= description %></p><% end %></div>
+  <% if local_assigns[:action_path] %><%= link_to action_label, action_path, class: "button" %><% end %>
+</header>

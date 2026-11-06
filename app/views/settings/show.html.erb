@@ -1,14 +1,17 @@
-<h1>Settings</h1>
-<dl><dt>Inbound address</dt><dd><%= Mailroom.inbound_address || "Not configured" %></dd>
+<%= render "shared/page_header", title: "Settings", description: "Receiving details and defaults for your domains." %>
+<dl class="panel settings-summary"><dt>Inbound address</dt><dd><%= Mailroom.inbound_address || "Not configured" %></dd>
 <dt>Forward sender</dt><dd><%= Mailroom.forward_sender || Setting.get("forward_sender").presence || "Not configured" %></dd>
 <dt>Instance ID</dt><dd><%= Mailroom.instance_id %></dd><dt>Version</dt><dd><%= Mailroom::VERSION %></dd></dl>
-<%= form_with url: settings_path, method: :patch, scope: :settings, class: "narrow" do |form| %>
-<%= form.label :default_forward_to, "Default forward to" %><%= form.email_field :default_forward_to, value: Setting.get("default_forward_to") %>
+<% content_for :inline_alert, flash[:alert] if flash[:alert].present? %>
+<%= form_with url: settings_path, method: :patch, scope: :settings, class: "panel form-panel" do |form| %>
+<%= render "shared/errors", messages: [flash[:alert]] if flash[:alert].present? %>
+<%= form.label :default_forward_to, "Default forward to" %><%= form.email_field :default_forward_to, value: Setting.get("default_forward_to"), aria: { describedby: "default-forward-help" } %>
+<p class="help" id="default-forward-help">Used when a domain does not have its own forwarding destination.</p>
 <% if ENV["MAILROOM_FORWARD_SENDER"].blank? %>
 <%= form.label :forward_sender, "Forward sender" %><%= form.email_field :forward_sender, value: Setting.get("forward_sender") %>
 <% end %>
 <%= form.label :inbound_spam_threshold, "Inbound spam threshold" %>
 <%= form.number_field :inbound_spam_threshold, value: Setting.get("inbound_spam_threshold"), step: "any", required: true, aria: { describedby: "spam-threshold-help" } %>
-<p id="spam-threshold-help">Messages above this spam score are blocked at Postmark and never reach this inbox. This setting only takes effect after <code>mailroom:postmark:configure</code> runs again.</p>
+<p id="spam-threshold-help">Messages above this spam score are blocked by the inbound provider and never reach this inbox. This setting only takes effect after <code>mailroom:postmark:configure</code> runs again.</p>
 <%= form.submit "Save settings" %>
 <% end %>

@@ -1,18 +1,17 @@
-<h1>Blocked senders</h1>
-<p>Messages from blocked senders are kept in the blocked inbox and never forwarded.</p>
-<%= link_to "View blocked messages", messages_path(blocked: "1") %>
+<%= render "shared/page_header", title: "Blocked senders", description: "#{pluralize(@blocked_senders.size, 'rule')} · Blocked mail is kept without forwarding", action_label: "View blocked messages", action_path: messages_path(blocked: "1") %>
 <%= render "shared/errors", record: @blocked_sender %>
-<%= form_with model: @blocked_sender, class: "narrow" do |form| %>
+<%= form_with model: @blocked_sender, class: "panel form-panel" do |form| %>
   <%= form.label :pattern, "Address or domain" %>
-  <%= form.text_field :pattern, required: true, placeholder: "spam@example.net or example.net" %>
+  <%= form.text_field :pattern, required: true, placeholder: "spam@example.net or example.net", aria: { describedby: "block-pattern-help" } %>
+  <p class="help" id="block-pattern-help">Use a full address to block one sender, or a bare domain to block all its senders.</p>
   <%= form.label :note %><%= form.text_field :note %>
-  <%= form.submit "Block sender" %>
+  <%= form.submit "Block sender", class: "danger" %>
 <% end %>
 <div class="table-scroll"><table>
   <thead><tr><th>Address or domain</th><th>Note</th><th>Added</th><th>Action</th></tr></thead>
   <tbody><% @blocked_senders.each do |sender| %><tr>
-    <td><%= sender.pattern %></td><td><%= sender.note %></td><td><%= display_time(sender.created_at) %></td>
-    <td><%= button_to "Remove", blocked_sender_path(sender), method: :delete %></td>
+    <td data-label="Address or domain"><%= sender.pattern %></td><td data-label="Note"><%= sender.note %></td><td data-label="Added"><%= display_time(sender.created_at) %></td>
+    <td data-label="Action"><%= button_to "Remove", blocked_sender_path(sender), method: :delete, class: "danger" %></td>
   </tr><% end %></tbody>
 </table></div>
-<% if @blocked_senders.empty? %><p>No blocked senders.</p><% end %>
+<% if @blocked_senders.empty? %><section class="empty panel"><h2>No blocked senders.</h2><p>Add an address or domain above to keep unwanted mail out of your inbox.</p><a href="#blocked_sender_pattern" class="button secondary">Add a blocked sender</a></section><% end %>

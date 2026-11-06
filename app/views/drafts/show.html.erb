@@ -1,9 +1,10 @@
-<h1><%= @draft.subject.presence || "(No subject)" %></h1>
+<%= link_to "Back to drafts", drafts_path, class: "back-link" %>
+<%= render "shared/page_header", title: @draft.subject.presence || "(No subject)", eyebrow: "Draft" %>
 <dl><dt>Status</dt><dd><%= @draft.status %></dd><dt>From</dt><dd><%= @draft.from_address %></dd>
 <dt>To</dt><dd><%= @draft.to_addresses.join(", ") %></dd>
 <% if @draft.sent? %><dt>Sent</dt><dd><%= display_time(@draft.sent_at) %></dd><% end %></dl>
-<pre class="body"><%= @draft.text_body %></pre>
+<section class="message-body"><pre class="body"><%= @draft.text_body %></pre></section>
 <% if @draft.draft? %>
-  <%= button_to "Send", deliver_draft_path(@draft) %>
-  <details <%= 'open' if @draft.errors.any? %>><summary>Edit</summary><%= render "form" %></details>
+  <div class="actions section-heading"><%= button_to "Send", deliver_draft_path(@draft) %></div>
+  <details class="panel form-panel" <%= 'open' if @draft.errors.any? %>><summary>Edit</summary><%= render "form" %></details>
 <% end %>
