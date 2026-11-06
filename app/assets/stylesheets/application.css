@@ -186,6 +186,9 @@ td .button, td button { font-size: .75rem; padding: 6px 10px; min-height: 32px; 
 @media (prefers-color-scheme: dark) {
   :root { --paper: #131d21; --surface: #19262b; --ink: #e7eeeb; --muted: #a5b5b8; --accent: #73c9ce; --accent-hover: #93dce0; --tint: #1c373c; --border: #34474b; --subtle: #233238; --danger: #f0a2a0; --warning-bg: #3c3323; --warning-ink: #e3c27c; }
   button, input[type=submit], .button { color: #10272b; }
+  button.secondary, input.secondary, .button.secondary { color: var(--ink); }
+  button.danger, input.danger, .button.danger { color: var(--danger); }
+  button.link-button { color: var(--muted); }
   .palette-0 { background: #29443d; color: #b2d8cb; }
   .palette-1 { background: #303e56; color: #c2cfe7; }
   .palette-2 { background: #493f30; color: #e0ceae; }
