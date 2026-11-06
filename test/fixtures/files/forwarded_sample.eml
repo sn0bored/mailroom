@@ -1,0 +1,30 @@
+Return-Path: <SRS0=aB3d=XY=sender.example.net=alice@eforward.registrar-servers.com>
+Received: from eforward1c-3.registrar-servers.com (eforward1c-3.registrar-servers.com. [198.54.122.11])
+        by inbound.postmarkapp.com with ESMTPS id sample0001
+        for <abc123hash@inbound.postmarkapp.com>;
+        Thu, 05 Nov 2026 18:38:08 -0800 (PST)
+Received: from asp-relay.et.namecheap.tech (unknown [10.51.8.247])
+	by eforward.registrar-servers.com (Postfix) with ESMTPS id 4jLNdW1N0Gz2mbQg
+	for <hello@example.org>; Fri, 06 Nov 2026 02:38:07 +0000 (UTC)
+X-Original-To: <hello@example.org>
+Received: from mail.sender.example.net (mail.sender.example.net [203.0.113.10])
+	by asp-relay.et.namecheap.tech (Postfix) with ESMTPS id 4jLNdP1s7Fz7t9t
+	for <hello@example.org>; Fri, 06 Nov 2026 02:38:01 +0000 (UTC)
+X-Spam-Checker-Version: SpamAssassin 3.4.0 (2014-02-07) on inbound.postmarkapp.com
+X-Spam-Status: No, score=-0.1
+X-Spam-Score: -0.1
+X-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS
+DKIM-Signature: v=1; a=rsa-sha256; d=sender.example.net; s=mail; c=relaxed/relaxed;
+	h=from:to:subject:date:message-id; bh=REDACTED=; b=REDACTED=
+From: Alice Example <alice@sender.example.net>
+Date: Fri, 06 Nov 2026 02:38:00 +0000
+Subject: Catch-all forward sample
+Message-ID: <sample-0001@sender.example.net>
+To: hello@example.org
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+This message was sent to hello@example.org and forwarded by the registrar's =
+catch-all to the Postmark inbound address. The real recipient survives in X-O=
+riginal-To and in the Received "for" clauses.

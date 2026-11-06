@@ -1,0 +1,40 @@
+{
+  "FromName": "Bob Example",
+  "MessageStream": "inbound",
+  "From": "bob@sender.example.net",
+  "FromFull": {
+    "Email": "alice@sender.example.net",
+    "Name": "Alice Example",
+    "MailboxHash": ""
+  },
+  "To": "support@mail.example.org",
+  "ToFull": [
+    {
+      "Email": "hello@example.org",
+      "Name": "",
+      "MailboxHash": ""
+    }
+  ],
+  "Cc": "",
+  "CcFull": [],
+  "Bcc": "",
+  "BccFull": [],
+  "OriginalRecipient": "support@mail.example.org",
+  "Subject": "MX mode sample",
+  "MessageID": "00000000-0000-0000-0000-000000000002",
+  "ReplyTo": "",
+  "MailboxHash": "",
+  "Date": "Fri, 06 Nov 2026 02:38:00 +0000",
+  "TextBody": "This message was sent to hello@example.org and forwarded by the registrar's catch-all to the Postmark inbound address.",
+  "HtmlBody": "",
+  "StrippedTextReply": "",
+  "Tag": "",
+  "Headers": [
+    {
+      "Name": "X-Spam-Score",
+      "Value": "0.4"
+    }
+  ],
+  "Attachments": [],
+  "RawEmail": "Return-Path: <bob@sender.example.net>\nReceived: from mail.sender.example.net (mail.sender.example.net [203.0.113.10])\n        by inbound.postmarkapp.com with ESMTPS id sample0002\n        for <support@mail.example.org>;\n        Fri, 06 Nov 2026 03:00:00 +0000 (UTC)\nX-Spam-Status: No, score=0.4\nX-Spam-Score: 0.4\nFrom: Bob Example <bob@sender.example.net>\nDate: Fri, 06 Nov 2026 02:59:00 +0000\nSubject: MX mode sample\nMessage-ID: <sample-0002@sender.example.net>\nTo: support@mail.example.org\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\nDelivered straight to a Postmark inbound domain, no registrar forwarding involved.\n"
+}

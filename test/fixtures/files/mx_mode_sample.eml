@@ -1,0 +1,16 @@
+Return-Path: <bob@sender.example.net>
+Received: from mail.sender.example.net (mail.sender.example.net [203.0.113.10])
+        by inbound.postmarkapp.com with ESMTPS id sample0002
+        for <support@mail.example.org>;
+        Fri, 06 Nov 2026 03:00:00 +0000 (UTC)
+X-Spam-Status: No, score=0.4
+X-Spam-Score: 0.4
+From: Bob Example <bob@sender.example.net>
+Date: Fri, 06 Nov 2026 02:59:00 +0000
+Subject: MX mode sample
+Message-ID: <sample-0002@sender.example.net>
+To: support@mail.example.org
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Delivered straight to a Postmark inbound domain, no registrar forwarding involved.

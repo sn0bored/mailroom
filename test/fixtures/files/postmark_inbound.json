@@ -1,0 +1,48 @@
+{
+  "FromName": "Alice Example",
+  "MessageStream": "inbound",
+  "From": "alice@sender.example.net",
+  "FromFull": {
+    "Email": "alice@sender.example.net",
+    "Name": "Alice Example",
+    "MailboxHash": ""
+  },
+  "To": "hello@example.org",
+  "ToFull": [
+    {
+      "Email": "hello@example.org",
+      "Name": "",
+      "MailboxHash": ""
+    }
+  ],
+  "Cc": "",
+  "CcFull": [],
+  "Bcc": "",
+  "BccFull": [],
+  "OriginalRecipient": "abc123hash@inbound.postmarkapp.com",
+  "Subject": "Catch-all forward sample",
+  "MessageID": "00000000-0000-0000-0000-000000000001",
+  "ReplyTo": "",
+  "MailboxHash": "",
+  "Date": "Fri, 06 Nov 2026 02:38:00 +0000",
+  "TextBody": "This message was sent to hello@example.org and forwarded by the registrar's catch-all to the Postmark inbound address.",
+  "HtmlBody": "",
+  "StrippedTextReply": "",
+  "Tag": "",
+  "Headers": [
+    {
+      "Name": "X-Spam-Score",
+      "Value": "-0.1"
+    },
+    {
+      "Name": "X-Spam-Status",
+      "Value": "No, score=-0.1"
+    },
+    {
+      "Name": "X-Original-To",
+      "Value": "<hello@example.org>"
+    }
+  ],
+  "Attachments": [],
+  "RawEmail": "Return-Path: <SRS0=aB3d=XY=sender.example.net=alice@eforward.registrar-servers.com>\nReceived: from eforward1c-3.registrar-servers.com (eforward1c-3.registrar-servers.com. [198.54.122.11])\n        by inbound.postmarkapp.com with ESMTPS id sample0001\n        for <abc123hash@inbound.postmarkapp.com>;\n        Thu, 05 Nov 2026 18:38:08 -0800 (PST)\nReceived: from asp-relay.et.namecheap.tech (unknown [10.51.8.247])\n\tby eforward.registrar-servers.com (Postfix) with ESMTPS id 4jLNdW1N0Gz2mbQg\n\tfor <hello@example.org>; Fri, 06 Nov 2026 02:38:07 +0000 (UTC)\nX-Original-To: <hello@example.org>\nReceived: from mail.sender.example.net (mail.sender.example.net [203.0.113.10])\n\tby asp-relay.et.namecheap.tech (Postfix) with ESMTPS id 4jLNdP1s7Fz7t9t\n\tfor <hello@example.org>; Fri, 06 Nov 2026 02:38:01 +0000 (UTC)\nX-Spam-Checker-Version: SpamAssassin 3.4.0 (2014-02-07) on inbound.postmarkapp.com\nX-Spam-Status: No, score=-0.1\nX-Spam-Score: -0.1\nX-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS\nDKIM-Signature: v=1; a=rsa-sha256; d=sender.example.net; s=mail; c=relaxed/relaxed;\n\th=from:to:subject:date:message-id; bh=REDACTED=; b=REDACTED=\nFrom: Alice Example <alice@sender.example.net>\nDate: Fri, 06 Nov 2026 02:38:00 +0000\nSubject: Catch-all forward sample\nMessage-ID: <sample-0001@sender.example.net>\nTo: hello@example.org\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: quoted-printable\n\nThis message was sent to hello@example.org and forwarded by the registrar's =\ncatch-all to the Postmark inbound address. The real recipient survives in X-O=\nriginal-To and in the Received \"for\" clauses.\n"
+}

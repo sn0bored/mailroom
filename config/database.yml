@@ -1,0 +1,24 @@
+# SQLite everywhere. In production every file lives under MAILROOM_DATA_DIR
+# (default ~/.mailroom) so the whole installation is one directory to back up.
+<% data_dir = ENV.fetch("MAILROOM_DATA_DIR") { Rails.env.production? ? File.expand_path("~/.mailroom") : "storage" } %>
+default: &default
+  adapter: sqlite3
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  timeout: 5000
+
+development:
+  <<: *default
+  database: storage/development.sqlite3
+
+test:
+  <<: *default
+  database: storage/test.sqlite3
+
+production:
+  primary:
+    <<: *default
+    database: <%= data_dir %>/mailroom.sqlite3
+  queue:
+    <<: *default
+    database: <%= data_dir %>/queue.sqlite3
+    migrations_paths: db/queue_migrate

@@ -1,0 +1,13 @@
+test:
+  service: Disk
+  root: <%= Rails.root.join("tmp/storage") %>
+
+local:
+  service: Disk
+  root: <%= Rails.root.join("storage") %>
+
+# Production: raw mail and attachments on local disk under MAILROOM_DATA_DIR.
+# Swap for an S3-compatible service if you host somewhere without a persistent disk.
+data_dir:
+  service: Disk
+  root: <%= ENV.fetch("MAILROOM_DATA_DIR") { File.expand_path("~/.mailroom") } %>/storage
