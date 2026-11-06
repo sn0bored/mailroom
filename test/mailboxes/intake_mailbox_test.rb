@@ -53,9 +53,10 @@ class IntakeMailboxTest < ActiveSupport::TestCase
   end
 
   test "a probe marks the domain and is not forwarded" do
-    source = forwarded_source.gsub("hello@example.org", @domain.probe_address)
+    source = "X-Mailroom-Instance: #{Mailroom.instance_id}\n" + forwarded_source.gsub("hello@example.org", @domain.probe_address)
     message = receive_source(source)
     assert_equal @domain.probe_address, message.to_address
+    assert_equal "hdr:X-Original-To", message.routed_via, "a returning probe is not a loop"
     assert @domain.reload.probe_received_at.present?
     assert_equal "skipped:probe", message.forward_status
   end

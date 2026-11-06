@@ -14,11 +14,12 @@ class IntakeMailbox < ApplicationMailbox
 
     builder = Intake::MessageBuilder.new(inbound_email, mail, resolution)
     message = builder.call
-    message.routed_via = "loop" if loop?
+    probe = probe?(message)
+    # A probe is our own mail coming back on purpose; anything else carrying our instance header is a loop.
+    message.routed_via = "loop" if loop? && !probe
     message.save!
     builder.attach_to(message)
 
-    probe = probe?(message)
     message.domain&.update!(last_received_at: Time.current)
     message.domain.update!(probe_received_at: Time.current) if probe
 
