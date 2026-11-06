@@ -1,5 +1,7 @@
-<h1>Audit</h1><p>The latest 200 events.</p>
-<div class="table-scroll"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Error</th><th>IP</th><th>Duration</th></tr></thead><tbody>
-<% @events.each do |event| %><tr><td><%= display_time(event.created_at) %></td><td><%= event.actor_type %> <%= event.actor_id %></td>
-<td><%= event.action %></td><td><%= event.target_type %> <%= event.target_id %></td><td><%= event.outcome %></td><td><%= event.error_class %></td><td><%= event.ip %></td><td><%= event.duration_ms %> ms</td></tr><% end %>
+<%= render "shared/page_header", title: "Audit", description: "#{pluralize(@events.size, 'event')} shown · The latest 200 events" %>
+<div class="table-scroll"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Error</th><th>IP</th><th class="numeric">Duration</th></tr></thead><tbody>
+<% @events.each do |event| %><tr><td data-label="Time"><%= display_time(event.created_at) %></td><td data-label="Actor"><%= event.actor_type %> <%= event.actor_id %></td>
+<td data-label="Action"><%= event.action %></td><td data-label="Target"><%= event.target_type %> <%= event.target_id %></td><td data-label="Outcome"><%= event.outcome %></td><td data-label="Error"><%= event.error_class %></td><td data-label="IP"><%= event.ip %></td><td class="numeric" data-label="Duration"><%= event.duration_ms %> ms</td></tr><% end %>
 </tbody></table></div>
+
+<% if @events.empty? %><section class="empty panel"><h2>No activity yet</h2><p>Mail activity will appear here as you use your inbox.</p><%= link_to "Go to inbox", messages_path, class: "button secondary" %></section><% end %>

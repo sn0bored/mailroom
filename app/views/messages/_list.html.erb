@@ -1,16 +1,25 @@
 <div class="message-list">
 <% messages.each do |message| %>
   <article class="message-row <%= 'unread' unless message.read? %>">
-    <div class="row"><span><%= message.display_from %></span><time><%= display_time(message.received_at) %></time></div>
-    <div class="recipient">To: <%= message.to_address %></div>
-    <%= link_to message.subject.presence || "(No subject)", message_path(message), class: "subject" %>
-    <p class="snippet"><%= message.snippet %></p>
-    <div class="meta"><span><%= message.domain&.name || "unrouted" %></span> <span><%= message.routed_via %></span>
-    <% if message.spam? %><span class="pill warning">Spam score: <%= message.spam_score %></span><% end %>
-    <% if message.blocked? %><span class="pill warning">blocked</span><% end %>
-    <% if message.list_mail? %><span class="pill">list</span><% end %>
-    <% if message.forward_status.present? %><span class="pill"><%= message.forward_status.sub("skipped:", "skipped: ") %></span><% end %></div>
+    <span class="avatar palette-<%= sender_palette(message) %>" aria-hidden="true"><%= sender_initials(message) %></span>
+    <div class="message-content">
+      <div class="message-topline">
+        <div class="sender"><span class="sender-name"><%= message.from_name.presence || message.from_address.presence || "Unknown sender" %></span>
+          <% if message.from_name.present? %><span class="sender-address"><%= message.from_address %></span><% end %>
+        </div>
+        <time datetime="<%= message.received_at.iso8601 %>" title="<%= display_time(message.received_at) %>"><%= relative_time(message.received_at) %></time>
+      </div>
+      <div class="recipient">To: <%= message.to_address %></div>
+      <div class="subject-line"><% unless message.read? %><span class="unread-dot"><span class="sr-only">Unread</span></span><% end %><%= link_to message.subject.presence || "(No subject)", message_path(message), class: "subject" %></div>
+      <p class="snippet"><%= message.snippet %></p>
+      <div class="meta"><span class="pill"><%= message.domain&.name || "unrouted" %></span>
+        <% if message.routed_via.present? %><span class="pill" title="Routed via"><%= message.routed_via %></span><% end %>
+        <% if message.spam? %><span class="pill warning">Spam score: <%= message.spam_score %></span><% end %>
+        <% if message.blocked? %><span class="pill warning">blocked</span><% end %>
+        <% if message.list_mail? %><span class="pill">list</span><% end %>
+        <% if message.forward_status.present? %><span class="pill"><%= message.forward_status.sub("skipped:", "skipped: ") %></span><% end %>
+      </div>
+    </div>
   </article>
 <% end %>
-<% if messages.empty? %><p class="empty">No messages here.</p><% end %>
 </div>

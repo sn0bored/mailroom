@@ -1,3 +1,4 @@
-<% if record.errors.any? %>
-<div class="flash alert" role="alert"><ul><% record.errors.full_messages.each do |message| %><li><%= message %></li><% end %></ul></div>
+<% errors = local_assigns[:messages] || record.errors.full_messages %>
+<% if errors.any? %>
+<div class="flash alert validation-errors" role="alert"><strong>Please check the following:</strong><ul><% errors.each do |message| %><li><%= message %></li><% end %></ul></div>
 <% end %>

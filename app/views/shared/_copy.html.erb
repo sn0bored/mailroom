@@ -1,0 +1,5 @@
+<div class="copy-block">
+  <pre class="<%= local_assigns[:token] ? 'token' : 'copy-value' %>" id="<%= id %>" tabindex="0"><%= value %></pre>
+  <button type="button" class="button secondary" data-copy-target="<%= id %>" hidden><%= local_assigns[:label] || "Copy" %></button>
+  <span class="copy-status help" role="status" aria-live="polite"></span>
+</div>

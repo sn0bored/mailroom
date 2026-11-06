@@ -1,0 +1,22 @@
+<% selected_domain = @domains.find { |domain| domain.name == params[:domain].to_s.strip.downcase } %>
+<% narrowed = params[:q].present? || %w[unread unrouted archived blocked].any? { |filter| params[filter] == "1" } || @page > 1 || (params[:domain].present? && !selected_domain) %>
+<section class="empty panel">
+  <%= mailroom_icon %>
+  <% if narrowed %>
+    <h2>No matching messages</h2><p>Try a different search or clear your filters to see more mail.</p>
+    <%= link_to "Clear filters", messages_path, class: "button secondary" %>
+  <% elsif selected_domain %>
+    <h2>No mail yet for <%= selected_domain.name %>.</h2>
+    <% if selected_domain.catch_all_instruction %>
+      <p>Add the catch-all forwarder at your registrar:</p>
+      <%= render "shared/copy", id: "empty-forwarder", value: selected_domain.catch_all_instruction %>
+    <% else %><p>Finish receiving setup to bring your first message into this inbox.</p><% end %>
+    <%= link_to "Set up receiving", domain_path(selected_domain), class: "button secondary" %>
+  <% elsif @domains.empty? %>
+    <h2>Your inbox starts here</h2><p>Add your first domain to bring its mail into one place.</p>
+    <%= link_to "Add domain", new_domain_path, class: "button" %>
+  <% else %>
+    <h2>No mail yet</h2><p>Set up a catch-all forwarder for your domain to start receiving mail.</p>
+    <%= link_to "Set up receiving", domain_path(@domains.first), class: "button secondary" %>
+  <% end %>
+</section>

@@ -36,6 +36,95 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       from_address: "owner@example.org", to_addresses: [ "recipient@example.net" ], subject: "Draft", text_body: "Text" }.merge(attributes))
   end
 
+  test "empty inbox guides receiving setup and preserves the forwarder text" do
+    Mailroom.stub(:inbound_address, "inbound@example.net") do
+      get messages_path, params: { domain: @domain.name }
+      assert_response :ok
+      assert_select ".empty h2", text: "No mail yet for example.org."
+      assert_select "#empty-forwarder", text: "*@example.org -> inbound@example.net"
+      assert_select ".empty a[href=?]", domain_path(@domain), text: "Set up receiving"
+      get messages_path
+      assert_select ".empty h2", text: "No mail yet"
+      assert_select ".empty a[href=?]", domain_path(@domain)
+    end
+    Mailroom.stub(:inbound_address, nil) do
+      get messages_path, params: { domain: @domain.name }
+      assert_select ".empty", text: /Finish receiving setup/
+      assert_select "#empty-forwarder", 0
+    end
+  end
+
+  test "empty searches offer reset and a new inbox offers a first domain" do
+    [ { q: "missing" }, { unread: "1" }, { unrouted: "1" }, { archived: "1" },
+      { blocked: "1" }, { domain: "example.net" }, { page: 2 } ].each do |filters|
+      get messages_path, params: filters
+      assert_select ".empty h2", text: "No matching messages"
+      assert_select ".empty a[href=?]", messages_path, text: "Clear filters"
+    end
+    @domain.destroy!
+    get messages_path
+    assert_select ".empty h2", text: "Your inbox starts here"
+    assert_select ".empty a[href=?]", new_domain_path
+    get domains_path
+    assert_select ".empty", text: /Add a domain to start receiving mail/
+    assert_select ".empty a[href=?]", new_domain_path
+  end
+
+  test "domain setup has an exact selectable forwarder and actionable empty state" do
+    Mailroom.stub(:inbound_address, "inbound@example.net") do
+      get domain_path(@domain)
+      assert_response :ok
+      assert_select "#domain-forwarder", text: "*@example.org -> inbound@example.net"
+      assert_select "button[type=button][data-copy-target=domain-forwarder]", text: "Copy forwarder"
+      assert_select "form[action=?] button", probe_domain_path(@domain), text: "Send me a probe"
+      assert_select ".empty", text: /No mail yet for example.org/
+      assert_select ".empty a[href='#setup-heading']"
+      assert_select "dl dt", text: "Receiving since"
+      assert_select "title", text: "example.org · Mailroom"
+      assert_select ".page-header a[href=?]", messages_path(params: { domain: @domain.name }), text: "View inbox"
+    end
+  end
+
+  test "secondary pages have helpful empty states" do
+    { drafts_path => "No drafts yet.", api_keys_path => "No API keys yet",
+      audit_events_path => "No activity yet" }.each do |path, title|
+      get path
+      assert_response :ok
+      assert_select ".empty h2", text: title
+      assert_select ".empty a", 1
+    end
+    get blocked_senders_path
+    assert_select "input[name='blocked_sender[pattern]']"
+    assert_select ".empty", text: /No blocked senders/
+  end
+
+  test "owner shell follows the section and preserves inbox filters in domain links" do
+    create_message
+    get messages_path, params: { q: "sample", group: "none", unread: "1", archived: "1", page: 2, unrouted: "1" }
+    assert_select "title", text: "Inbox · Mailroom"
+    assert_select "link[rel=icon][href^='data:image/svg+xml,']"
+    assert_select ".primary-nav a[aria-current=page]", text: "Inbox"
+    expected = messages_path(params: { domain: @domain.name, q: "sample", group: "none", unread: "1", archived: "1" })
+    assert_select ".domain-unread a[href=?]", expected
+    get drafts_path
+    assert_select ".primary-nav a[aria-current=page]", text: "Drafts"
+    assert_select ".domain-unread .count", text: "1 unread"
+    assert_select ".user-address", text: @user.email_address
+  end
+
+  test "message rows have accessible unread state relative dates and deterministic monograms" do
+    travel_to Time.utc(2026, 11, 6, 12) do
+      create_message(from_name: "Example Sender", received_at: 2.hours.ago)
+      get messages_path
+      assert_select ".avatar", text: "ES"
+      palette = css_select(".avatar").first["class"]
+      assert_select ".unread-dot .sr-only", text: "Unread"
+      assert_select "time[datetime='2026-11-06T10:00:00Z'][title='2026-11-06 10:00 UTC']", text: "2h ago"
+      get messages_path
+      assert_equal palette, css_select(".avatar").first["class"]
+    end
+  end
+
   test "all owner pages require a session" do
     message = create_message
     draft = create_draft
@@ -93,7 +182,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select "#domain-heading-#{@domain.id} a[href=?]", domain_path(@domain)
     rows = css_select("#domain-heading-#{@domain.id} + .message-list .subject")
     assert_equal [ newer.subject, older.subject ], rows.map(&:text)
-    assert_select ".domain-unread a[href=?]", "/messages?domain=example.org", text: "example.org: 1 unread"
+    assert_select ".domain-unread a[href=?]", "/messages?domain=example.org", text: /example.org\s*1 unread/
     assert_select ".recipient", text: "To: hello@example.net"
     get messages_path, params: { group: "none" }
     assert_select "section.domain-group", 0
@@ -112,7 +201,8 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select ".message-row .pill", text: "list"
     assert_select ".message-row .pill", text: "skipped: blocked"
     assert_select ".message-row .pill", text: "Spam score: 7.5"
-    assert_select ".message-row .row span", text: "Example Sender <sender@example.net>"
+    assert_select ".message-row .sender-name", text: "Example Sender"
+    assert_select ".message-row .sender-address", text: "sender@example.net"
     assert_select "a[href=?]", message_path(blocked)
   end
 
@@ -173,9 +263,9 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select "input[type=radio][value=listed][checked]"
     assert_select "textarea[name='domain[forward_addresses]']", text: "hello\nsales@example.org"
     assert_select ".domain-counts dt", text: "Messages"
-    assert_select ".domain-counts dd:first-of-type", text: "4"
-    assert_select ".domain-counts dd:nth-of-type(2)", text: "1"
-    assert_select ".domain-counts dd:nth-of-type(3)", text: /3/
+    assert_select ".domain-counts .stat:nth-child(1) dd", text: "4"
+    assert_select ".domain-counts .stat:nth-child(2) dd", text: "1"
+    assert_select ".domain-counts .stat:nth-child(3) dd:first-of-type", text: /3/
     assert_select ".domain-counts li", text: "spam: 2"
     assert_select ".domain-counts li", text: "not_listed: 1"
     patch domain_path(@domain), params: { domain: { forward_mode: "off", forward_addresses: "", send_enabled: "0" } }
@@ -423,6 +513,8 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_equal %w[example.org example.net], key.allowed_from_domains
     assert_equal "no-store", response.headers["Cache-Control"]
     assert_includes response.body, "It will not be shown again."
+    assert_select "button[data-copy-target=api-key-token]", text: "Copy API key"
+    assert_select "meta[name=turbo-cache-control][content=no-cache]"
     get api_keys_path
     assert_response :ok
     assert_not_includes response.body, token

@@ -1,6 +1,8 @@
-<div class="row"><h1>API keys</h1><%= link_to "New API key", new_api_key_path, class: "button" %></div>
+<%= render "shared/page_header", title: "API keys", description: "#{pluralize(@api_keys.size, 'key')} · Control access for your apps and agents", action_label: "New API key", action_path: new_api_key_path %>
 <div class="table-scroll"><table><thead><tr><th>Name</th><th>Label</th><th>Scopes</th><th>Allowed from domains</th><th>Last used</th><th>Revoked</th><th>Action</th></tr></thead><tbody>
-<% @api_keys.each do |key| %><tr><td><%= key.name %></td><td><code><%= key.label %></code></td><td><%= key.scopes.join(", ") %></td>
-<td><%= key.allowed_from_domains.presence&.join(", ") || "All owned domains" %></td><td><%= display_time(key.last_used_at) %></td><td><%= display_time(key.revoked_at) %></td>
-<td><%= button_to "Revoke", api_key_path(key), method: :delete if key.active? %></td></tr><% end %>
+<% @api_keys.each do |key| %><tr><td data-label="Name"><%= key.name %></td><td data-label="Label"><code><%= key.label %></code></td><td data-label="Scopes"><%= key.scopes.join(", ") %></td>
+<td data-label="Allowed from domains"><%= key.allowed_from_domains.presence&.join(", ") || "All owned domains" %></td><td data-label="Last used"><%= display_time(key.last_used_at) %></td><td data-label="Revoked"><%= display_time(key.revoked_at) %></td>
+<td data-label="Action"><%= button_to "Revoke", api_key_path(key), method: :delete, class: "danger" if key.active? %></td></tr><% end %>
 </tbody></table></div>
+
+<% if @api_keys.empty? %><section class="empty panel"><h2>No API keys yet</h2><p>Create a key to give an app or agent access to your mail.</p><%= link_to "New API key", new_api_key_path, class: "button secondary" %></section><% end %>

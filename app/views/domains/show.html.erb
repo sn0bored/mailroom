@@ -1,21 +1,28 @@
-<h1><%= @domain.name %></h1>
-<dl class="domain-counts">
-  <dt>Messages</dt><dd><%= @message_count %></dd>
-  <dt>Forwarded</dt><dd><%= @forwarded_count %></dd>
-  <dt>Skipped</dt><dd><%= @skipped_counts.values.sum %>
-    <% if @skipped_counts.any? %><ul>
-      <% @skipped_counts.sort.each do |status, count| %><li><%= status.delete_prefix("skipped:") %>: <%= count %></li><% end %>
-    </ul><% end %>
-  </dd>
+<%= render "shared/page_header", title: @domain.name, eyebrow: "Domain", description: @domain.receiving? ? "Receiving mail" : "Waiting for your first message", action_label: "View inbox", action_path: messages_path(params: { domain: @domain.name }) %>
+<dl class="status-strip panel">
+  <div><dt title="Based on the earliest retained message">Receiving since</dt><dd><%= display_time(@domain.messages.minimum(:received_at)) %></dd></div>
+  <div><dt>Last received</dt><dd><%= display_time(@domain.last_received_at) %></dd></div>
+  <div><dt>Probe state</dt><dd><span class="pill"><%= @probe&.status || "Not sent" %></span></dd></div>
 </dl>
-<h2>Set up receiving</h2>
-<% if Mailroom.inbound_address.present? %>
-<p class="setup-line">Add a catch-all forwarder at your registrar: <code>*@<%= @domain.name %> -&gt; <%= Mailroom.inbound_address %></code></p>
-<% else %><p class="setup-line">Run <code>bin/rails mailroom:postmark:configure</code> first to get your inbound address</p><% end %>
-<p>Or point an MX record for a subdomain at <%= Mailroom::POSTMARK_INBOUND_DOMAIN %>, priority 10, and set it as the server's inbound domain.</p>
-<%= button_to "Send me a probe", probe_domain_path(@domain) %>
-<dl><dt>Probe state</dt><dd><%= @probe&.status || "Not sent" %></dd>
-<dt>Probe sent</dt><dd><%= display_time(@probe&.sent_at) %></dd>
-<dt>Probe received</dt><dd><%= display_time(@domain.probe_received_at) %></dd></dl>
-<h2>Domain settings</h2><section class="narrow"><%= render "form" %></section>
-<h2>Recent messages</h2><%= render "messages/list", messages: @messages %>
+<section class="setup-panel panel" aria-labelledby="setup-heading">
+  <div class="section-heading"><div><p class="eyebrow">Receiving setup</p><h2 id="setup-heading">One forwarder. Every address.</h2></div></div>
+  <% if @domain.catch_all_instruction %>
+    <p class="setup-line">Add a catch-all forwarder at your registrar:</p>
+    <%= render "shared/copy", id: "domain-forwarder", value: @domain.catch_all_instruction, label: "Copy forwarder" %>
+    <p class="help">Keep the address and arrow exactly as shown when setting up your forwarder.</p>
+  <% else %>
+    <p class="setup-line">Run <code>bin/rails mailroom:postmark:configure</code> first to get your inbound address.</p>
+  <% end %>
+  <div class="probe-row"><%= button_to "Send me a probe", probe_domain_path(@domain), class: "secondary" %><p class="help">Send a test message to check that mail can reach this domain.</p></div>
+  <dl class="compact-details"><dt>Probe sent</dt><dd><%= display_time(@probe&.sent_at) %></dd><dt>Probe received</dt><dd><%= display_time(@domain.probe_received_at) %></dd></dl>
+</section>
+<dl class="domain-counts stat-grid">
+  <div class="stat panel"><dt>Messages</dt><dd><%= @message_count %></dd></div>
+  <div class="stat panel"><dt>Forwarded</dt><dd><%= @forwarded_count %></dd></div>
+  <div class="stat panel"><dt>Skipped</dt><dd><%= @skipped_counts.values.sum %></dd>
+    <% if @skipped_counts.any? %><dd class="stat-breakdown"><ul><% @skipped_counts.sort.each do |status, count| %><li><%= status.delete_prefix("skipped:") %>: <%= count %></li><% end %></ul></dd><% end %>
+  </div>
+</dl>
+<section class="panel form-panel" aria-labelledby="domain-settings-heading"><h2 id="domain-settings-heading">Forwarding &amp; sending</h2><%= render "form" %></section>
+<section aria-labelledby="recent-heading"><div class="section-heading"><h2 id="recent-heading">Recent messages</h2><%= link_to "View all", messages_path(params: { domain: @domain.name }) %></div>
+<% if @messages.any? %><%= render "messages/list", messages: @messages %><% else %><div class="empty panel"><p>No mail yet for <%= @domain.name %>. Add the forwarder above, then send a probe to check your setup.</p><a href="#setup-heading" class="button secondary">Set up receiving</a></div><% end %></section>

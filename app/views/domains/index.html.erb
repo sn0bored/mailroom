@@ -1,8 +1,8 @@
-<div class="row"><h1>Domains</h1><%= link_to "Add domain", new_domain_path, class: "button" %></div>
+<%= render "shared/page_header", title: "Domains", description: "#{pluralize(@domains.size, 'domain')} connected to your inbox", action_label: "Add domain", action_path: new_domain_path %>
 <div class="table-scroll"><table><thead><tr><th>Name</th><th>Status</th><th>Last received</th><th>Send</th><th>Probe received</th></tr></thead><tbody>
 <% @domains.each do |domain| %><tr>
-<td><%= link_to domain.name, domain %></td><td><span class="pill"><%= domain.receiving? ? "receiving" : "waiting for mail" %></span></td>
-<td><%= display_time(domain.last_received_at) %></td><td><%= domain.send_enabled? ? "On" : "Off" %></td><td><%= display_time(domain.probe_received_at) %></td>
+<td data-label="Name"><%= link_to domain.name, domain %></td><td data-label="Status"><span class="pill"><%= domain.receiving? ? "receiving" : "waiting for mail" %></span></td>
+<td data-label="Last received"><%= display_time(domain.last_received_at) %></td><td data-label="Send"><%= domain.send_enabled? ? "On" : "Off" %></td><td data-label="Probe received"><%= display_time(domain.probe_received_at) %></td>
 </tr><% end %>
 </tbody></table></div>
-<% if @domains.empty? %><p>Add a domain to start receiving mail.</p><% end %>
+<% if @domains.empty? %><section class="empty panel"><h2>A home for your domains</h2><p>Add a domain to start receiving mail.</p><%= link_to "Add domain", new_domain_path, class: "button secondary" %></section><% end %>
