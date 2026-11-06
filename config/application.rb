@@ -28,6 +28,9 @@ module Mailroom
     # Common ones are `templates`, `generators`, or `middleware`, for example.
     config.autoload_lib(ignore: %w[assets tasks])
 
+    # Attachments are stored as received; no image variants are generated.
+    config.active_storage.variant_processor = :disabled
+
     # Raw inbound mail is the archive. Action Mailbox would delete it after 30 days by default.
     config.action_mailbox.incinerate = false
 
