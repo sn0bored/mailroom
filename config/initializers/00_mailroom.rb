@@ -18,6 +18,11 @@ module Mailroom
   def self.default_forward_to = ENV["MAILROOM_DEFAULT_FORWARD_TO"].presence
   def self.trust_local? = ENV["MAILROOM_TRUST_LOCAL"] == "1"
 
+  # True when outbound mail can actually leave: a Postmark token in production, or the test delivery method.
+  def self.sending_configured?
+    ENV["POSTMARK_SERVER_TOKEN"].present? || ActionMailer::Base.delivery_method == :test
+  end
+
   # Stamped on every outbound message so a copy that comes back is recognised as a loop.
   def self.instance_id
     ENV["MAILROOM_INSTANCE_ID"].presence || Setting.get("instance_id") || Setting.set("instance_id", SecureRandom.hex(8)).value

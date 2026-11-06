@@ -5,6 +5,7 @@ module Outbound
     def self.call(outbound_message, actor: nil)
       record = outbound_message
       raise NotAllowed, "message must be draft or queued" unless %w[draft queued].include?(record.status)
+      raise NotAllowed, "no mail provider configured (set POSTMARK_SERVER_TOKEN)" unless Mailroom.sending_configured?
       domain = Domain.active.find_by(name: record.from_domain)
       unless domain&.send_enabled?
         reason = record.kind == "probe" ? "probe sender's domain must be active and send_enabled" : "sender domain is inactive, unknown, or sending is disabled"

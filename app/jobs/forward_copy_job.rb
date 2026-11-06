@@ -6,6 +6,10 @@ class ForwardCopyJob < ApplicationJob
       message.update!(forward_status: "skipped:no_target")
       return
     end
+    unless Mailroom.sending_configured?
+      message.update!(forward_status: "skipped:no_provider")
+      return
+    end
     if Mailroom.forward_sender.blank?
       Rails.logger.warn("Forward copy skipped: no sender configured") unless message.forward_status == "skipped:no_sender"
       message.update!(forward_status: "skipped:no_sender")

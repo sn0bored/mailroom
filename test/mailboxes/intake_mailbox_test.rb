@@ -70,6 +70,14 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_equal "skipped:spam", spam.forward_status
   end
 
+  test "without a mail provider the copy is skipped, not attempted" do
+    ActionMailer::Base.delivery_method = :smtp
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    assert_equal "skipped:no_provider", message.forward_status
+  ensure
+    ActionMailer::Base.delivery_method = :test
+  end
+
   test "html only mail gets a text body" do
     source = "From: a@sender.example.net\nTo: hello@example.org\nSubject: html\nMessage-ID: <h1@sender.example.net>\nContent-Type: text/html; charset=UTF-8\n\n<p>Hello <b>there</b></p>"
     message = receive_source(source)

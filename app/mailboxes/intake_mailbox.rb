@@ -76,6 +76,7 @@ class IntakeMailbox < ApplicationMailbox
     return "unrouted" if message.domain.nil?
     return "no_target" unless message.domain.forwarding?
     return "no_sender" if Mailroom.forward_sender.blank?
+    return "no_provider" unless Mailroom.sending_configured?
     return "list" if message.list_mail
     return "spam" if message.spam?(message.domain.forward_copy_max_spam)
     nil
