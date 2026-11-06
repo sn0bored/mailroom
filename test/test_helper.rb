@@ -4,8 +4,15 @@ ENV["MAILROOM_INSTANCE_ID"] ||= "test-instance"
 require_relative "../config/environment"
 require "rails/test_help"
 
+# Integration requests default to localhost so the public ingress gate treats them as internal;
+# the gate's own tests pass explicit Host headers.
+class ActionDispatch::IntegrationTest
+  setup { host! "localhost" }
+end
+
 module ActiveSupport
   class TestCase
+    include ActiveJob::TestHelper
     parallelize(workers: 1)
     fixtures :all
 

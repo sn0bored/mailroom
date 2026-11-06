@@ -38,3 +38,6 @@
 .env.*
 !.env.example
 /launchd/*.local.plist
+
+# Mailroom uses SECRET_KEY_BASE from the environment; no encrypted credentials file.
+/config/credentials.yml.enc

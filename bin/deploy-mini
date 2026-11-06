@@ -12,13 +12,14 @@ LABEL="${3:-com.mailroom.server}"
 git push
 ssh "$HOST" bash -s <<EOF
 set -euo pipefail
-export PATH="/opt/homebrew/bin:\$HOME/.rbenv/shims:\$HOME/.rbenv/bin:\$PATH"
+export PATH="\$HOME/.rbenv/shims:\$HOME/.rbenv/bin:/opt/homebrew/bin:\$PATH"
 cd "$REMOTE"
 git pull --ff-only
 bundle install --quiet
 if [ -f "\$HOME/.mailroom/env" ]; then set -a; . "\$HOME/.mailroom/env"; set +a; fi
 export RAILS_ENV=production MAILROOM_DATA_DIR="\${MAILROOM_DATA_DIR:-\$HOME/.mailroom}"
-bin/rails db:migrate
+bin/rails db:prepare
+bin/rails assets:precompile
 launchctl kickstart -k "gui/\$(id -u)/$LABEL"
 echo "deployed \$(git rev-parse --short HEAD) and restarted $LABEL"
 EOF

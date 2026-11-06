@@ -23,7 +23,8 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert message.snippet.present?
     assert_not message.list_mail
     assert @domain.reload.last_received_at.present?
-    assert_equal "skipped:no_forwarder", message.forward_status, "forward job is absent in this chunk, recorded not dropped"
+    assert_equal "queued", message.forward_status
+    assert_enqueued_with(job: ForwardCopyJob, args: [ message.id ])
   end
 
   test "unknown domain is stored as unrouted, never dropped" do

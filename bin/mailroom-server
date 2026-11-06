@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export PATH="/opt/homebrew/bin:$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:/opt/homebrew/bin:$PATH"
 if [ -f "$HOME/.mailroom/env" ]; then
   set -a
   . "$HOME/.mailroom/env"
