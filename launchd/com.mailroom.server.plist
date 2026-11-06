@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Mailroom web server as a launchd user agent (macOS). Replace __REPO__ with the checkout path
+  and __HOME__ with the home directory, then:
+    cp launchd/com.mailroom.server.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mailroom.server.plist
+  The server binds 127.0.0.1 only; expose it with Tailscale Serve/Funnel (see README).
+  Never point MAILROOM_DATA_DIR at a removable volume: launchd agents hang on the macOS permission prompt.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mailroom.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/bin/mailroom-server</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.mailroom/logs/server.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.mailroom/logs/server.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+</dict>
+</plist>

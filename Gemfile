@@ -61,3 +61,6 @@ end
 # Mailroom
 gem "postmark-rails" # outbound delivery through Postmark
 gem "rack-attack"    # throttling for logins, API auth and sends
+
+# ActiveSupport 8.0 still passes quirks_mode to JSON.generate, which json 3.x rejects.
+gem "json", "< 3"

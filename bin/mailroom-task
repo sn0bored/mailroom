@@ -1,0 +1,18 @@
+#!/bin/bash
+# Run a Rails or rake command with the production environment loaded, for launchd jobs and one-offs:
+#   bin/mailroom-task mailroom:backup
+#   bin/mailroom-task mailroom:postmark:retry_failed
+#   bin/mailroom-task runner 'puts Message.count'
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+export PATH="/opt/homebrew/bin:$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+if [ -f "$HOME/.mailroom/env" ]; then
+  set -a
+  . "$HOME/.mailroom/env"
+  set +a
+fi
+export RAILS_ENV="${RAILS_ENV:-production}"
+export MAILROOM_DATA_DIR="${MAILROOM_DATA_DIR:-$HOME/.mailroom}"
+
+exec bin/rails "$@"

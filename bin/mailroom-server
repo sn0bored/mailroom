@@ -1,0 +1,20 @@
+#!/bin/bash
+# Start Mailroom in production on a machine that runs it under launchd or systemd.
+# Reads ~/.mailroom/env (see .env.example) and binds to 127.0.0.1 only: put Tailscale Serve,
+# Tailscale Funnel or a reverse proxy in front.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+export PATH="/opt/homebrew/bin:$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+if [ -f "$HOME/.mailroom/env" ]; then
+  set -a
+  . "$HOME/.mailroom/env"
+  set +a
+fi
+
+export RAILS_ENV="${RAILS_ENV:-production}"
+export MAILROOM_DATA_DIR="${MAILROOM_DATA_DIR:-$HOME/.mailroom}"
+export SOLID_QUEUE_IN_PUMA="${SOLID_QUEUE_IN_PUMA:-true}"
+mkdir -p "$MAILROOM_DATA_DIR/logs" "$MAILROOM_DATA_DIR/storage" "$MAILROOM_DATA_DIR/backups"
+
+exec bin/rails server -b 127.0.0.1 -p "${MAILROOM_PORT:-3100}" -e "$RAILS_ENV"

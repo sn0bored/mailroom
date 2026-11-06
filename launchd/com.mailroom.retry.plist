@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hourly: ask Postmark to retry inbound messages it gave up on after an outage (bin/rails mailroom:postmark:retry_failed). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.mailroom.retry</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/bin/mailroom-task</string>
+    <string>mailroom:postmark:retry_failed</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.mailroom/logs/retry.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.mailroom/logs/retry.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>LANG</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+</dict>
+</plist>

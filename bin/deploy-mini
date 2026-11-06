@@ -1,0 +1,24 @@
+#!/bin/bash
+# Deploy to a Mac (or any box) that runs Mailroom from a git checkout under launchd:
+# push the current branch, then pull, bundle, migrate and restart over ssh.
+#
+#   bin/deploy-mini <ssh-host> [remote-checkout] [launchd-label]
+#   bin/deploy-mini mini ~/Sites/mailroom com.mailroom.server
+set -euo pipefail
+HOST="${1:?usage: bin/deploy-mini <ssh-host> [remote-checkout] [launchd-label]}"
+REMOTE="${2:-Sites/mailroom}"
+LABEL="${3:-com.mailroom.server}"
+
+git push
+ssh "$HOST" bash -s <<EOF
+set -euo pipefail
+export PATH="/opt/homebrew/bin:\$HOME/.rbenv/shims:\$HOME/.rbenv/bin:\$PATH"
+cd "$REMOTE"
+git pull --ff-only
+bundle install --quiet
+if [ -f "\$HOME/.mailroom/env" ]; then set -a; . "\$HOME/.mailroom/env"; set +a; fi
+export RAILS_ENV=production MAILROOM_DATA_DIR="\${MAILROOM_DATA_DIR:-\$HOME/.mailroom}"
+bin/rails db:migrate
+launchctl kickstart -k "gui/\$(id -u)/$LABEL"
+echo "deployed \$(git rev-parse --short HEAD) and restarted $LABEL"
+EOF
