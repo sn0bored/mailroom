@@ -1,20 +1,29 @@
 module Outbound
-  # Delivers an OutboundMessage through the configured mailer. Implemented in the outbound chunk;
-  # this stub only fixes the interface the UI and API call.
   class Send
     class NotAllowed < StandardError; end
 
     def self.call(outbound_message, actor: nil)
-      new(outbound_message, actor: actor).call
-    end
+      record = outbound_message
+      raise NotAllowed, "message must be draft or queued" unless %w[draft queued].include?(record.status)
+      domain = Domain.active.find_by(name: record.from_domain)
+      unless domain&.send_enabled?
+        reason = record.kind == "probe" ? "probe sender's domain must be active and send_enabled" : "sender domain is inactive, unknown, or sending is disabled"
+        raise NotAllowed, reason
+      end
+      if record.api_key && !record.api_key.may_send_from?(record.from_domain)
+        raise NotAllowed, "key cannot send from this domain"
+      end
+      raise NotAllowed, "recipients required" if record.recipients.reject(&:blank?).empty?
 
-    def initialize(outbound_message, actor: nil)
-      @outbound_message = outbound_message
-      @actor = actor
-    end
-
-    def call
-      raise NotImplementedError, "Outbound::Send is implemented in the outbound chunk"
+      record.user ||= actor if actor.is_a?(User)
+      record.api_key ||= actor if actor.is_a?(ApiKey)
+      # Check the supplied actor as well when it becomes the message's key.
+      if record.api_key && !record.api_key.may_send_from?(record.from_domain)
+        raise NotAllowed, "key cannot send from this domain"
+      end
+      record.update!(status: "queued", error: nil)
+      OutboundDeliveryJob.perform_later(record.id)
+      record
     end
   end
 end
