@@ -2,10 +2,14 @@
 <% messages.each do |message| %>
   <article class="message-row <%= 'unread' unless message.read? %>">
     <div class="row"><span><%= message.display_from %></span><time><%= display_time(message.received_at) %></time></div>
+    <div class="recipient">To: <%= message.to_address %></div>
     <%= link_to message.subject.presence || "(No subject)", message_path(message), class: "subject" %>
     <p class="snippet"><%= message.snippet %></p>
     <div class="meta"><span><%= message.domain&.name || "unrouted" %></span> <span><%= message.routed_via %></span>
-    <% if message.spam? %><span class="pill warning">Spam score: <%= message.spam_score %></span><% end %></div>
+    <% if message.spam? %><span class="pill warning">Spam score: <%= message.spam_score %></span><% end %>
+    <% if message.blocked? %><span class="pill warning">blocked</span><% end %>
+    <% if message.list_mail? %><span class="pill">list</span><% end %>
+    <% if message.forward_status.present? %><span class="pill"><%= message.forward_status.sub("skipped:", "skipped: ") %></span><% end %></div>
   </article>
 <% end %>
 <% if messages.empty? %><p class="empty">No messages here.</p><% end %>

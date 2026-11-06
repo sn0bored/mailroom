@@ -1,9 +1,23 @@
 class ForwardCopyJob < ApplicationJob
+  FORWARD_COPIES_PER_SENDER_PER_HOUR = Integer(ENV.fetch("MAILROOM_FORWARD_PER_SENDER_HOURLY", "5"))
+
   def perform(message_id)
     message = Message.find(message_id)
+    if message.blocked? || BlockedSender.blocks?(message.from_address)
+      message.update!(blocked: true, forward_status: "skipped:blocked")
+      return
+    end
     return if message.domain.nil?
-    unless message.domain.forwarding?
+    if message.domain.forward_target.blank?
       message.update!(forward_status: "skipped:no_target")
+      return
+    end
+    if message.domain.forward_mode == "off"
+      message.update!(forward_status: "skipped:forward_off")
+      return
+    end
+    unless message.domain.forward_copy_for?(message)
+      message.update!(forward_status: "skipped:not_listed")
       return
     end
     unless Mailroom.sending_configured?
@@ -13,6 +27,11 @@ class ForwardCopyJob < ApplicationJob
     if Mailroom.forward_sender.blank?
       Rails.logger.warn("Forward copy skipped: no sender configured") unless message.forward_status == "skipped:no_sender"
       message.update!(forward_status: "skipped:no_sender")
+      return
+    end
+
+    unless ForwardThrottle.allow?(message.from_address)
+      message.update!(forward_status: "skipped:throttled")
       return
     end
 

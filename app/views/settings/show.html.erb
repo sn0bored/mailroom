@@ -6,5 +6,9 @@
 <%= form.label :default_forward_to, "Default forward to" %><%= form.email_field :default_forward_to, value: Setting.get("default_forward_to") %>
 <% if ENV["MAILROOM_FORWARD_SENDER"].blank? %>
 <%= form.label :forward_sender, "Forward sender" %><%= form.email_field :forward_sender, value: Setting.get("forward_sender") %>
-<% end %><%= form.submit "Save settings" %>
+<% end %>
+<%= form.label :inbound_spam_threshold, "Inbound spam threshold" %>
+<%= form.number_field :inbound_spam_threshold, value: Setting.get("inbound_spam_threshold"), step: "any", required: true, aria: { describedby: "spam-threshold-help" } %>
+<p id="spam-threshold-help">Messages above this spam score are blocked at Postmark and never reach this inbox. This setting only takes effect after <code>mailroom:postmark:configure</code> runs again.</p>
+<%= form.submit "Save settings" %>
 <% end %>

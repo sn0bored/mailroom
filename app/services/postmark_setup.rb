@@ -18,7 +18,8 @@ class PostmarkSetup
     raise ArgumentError, "RAILS_INBOUND_EMAIL_PASSWORD is not set" if password.blank?
 
     hook = "https://actionmailbox:#{password}@#{public_host}#{Mailroom::INGRESS_PATH_PREFIX}postmark/inbound_emails"
-    client.update_server_info(inbound_hook_url: hook, raw_email_enabled: true)
+    client.update_server_info(inbound_hook_url: hook, raw_email_enabled: true,
+      inbound_spam_threshold: Setting.get("inbound_spam_threshold").to_f)
     info = client.server_info
     Setting.set("inbound_hash", info[:inbound_hash].to_s)
     Setting.set("postmark_server_id", info[:id].to_s)

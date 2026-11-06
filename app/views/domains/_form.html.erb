@@ -1,6 +1,16 @@
 <%= render "shared/errors", record: @domain %>
 <%= form_with model: @domain do |form| %>
   <%= form.label :name, "Domain name" %><%= form.text_field :name, required: true, placeholder: "example.org" %>
+  <fieldset>
+    <legend>Forward copies</legend>
+    <% [["all", "All messages"], ["listed", "Only these addresses"], ["off", "Off"]].each do |value, label| %>
+      <label class="check"><%= form.radio_button :forward_mode, value %><%= label %></label>
+    <% end %>
+    <p>Spam and list mail are stored without forwarding.</p>
+    <%= form.label :forward_addresses, "Addresses to forward" %>
+    <%= form.text_area :forward_addresses, value: Array(@domain.forward_addresses).join("\n"), rows: 4, aria: { describedby: "forward-addresses-help" } %>
+    <p id="forward-addresses-help">One per line, as a local part or full address, such as hello or hello@example.org. Matching uses the local part, ignoring case.</p>
+  </fieldset>
   <%= form.label :forward_copy_to, "Forward copies to" %><%= form.email_field :forward_copy_to %>
   <label class="check"><%= form.check_box :send_enabled %>Enable sending</label>
   <%= form.label :forward_copy_max_spam, "Maximum spam score for forwarded copies" %><%= form.number_field :forward_copy_max_spam, step: "any", required: true %>

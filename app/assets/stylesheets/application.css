@@ -16,14 +16,14 @@ p { overflow-wrap: anywhere; }
 form { margin: 1rem 0; }
 label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
 input, select, textarea, button { font: inherit; }
-input:not([type=checkbox]):not([type=submit]), select, textarea { display: block; width: 100%; padding: .65rem; border: 1px solid #a8bbbf; border-radius: .35rem; background: white; color: inherit; }
+input:not([type=checkbox]):not([type=radio]):not([type=submit]), select, textarea { display: block; width: 100%; padding: .65rem; border: 1px solid #a8bbbf; border-radius: .35rem; background: white; color: inherit; }
 textarea { resize: vertical; }
 button, input[type=submit], .button { display: inline-block; background: #0f7f8c; color: white; border: 1px solid #0f7f8c; border-radius: .35rem; padding: .6rem 1rem; cursor: pointer; text-decoration: none; }
 input[type=submit] { margin-top: 1rem; }
 .link-button { background: none; color: #0f7f8c; border: 0; padding: 0; text-decoration: underline; }
 :focus-visible { outline: 3px solid #0f7f8c; outline-offset: 3px; }
 .check { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
-input[type=checkbox] { width: 1.15rem; height: 1.15rem; accent-color: #0f7f8c; }
+input[type=checkbox], input[type=radio] { width: 1.15rem; height: 1.15rem; accent-color: #0f7f8c; }
 fieldset { border: 1px solid #dce5e6; margin: 1.5rem 0; }
 .flash { padding: 1rem; margin-bottom: 1.5rem; border: 1px solid #b6dadd; border-radius: .4rem; background: #edf7f8; overflow-wrap: anywhere; }
 .alert, .warning { background: #fff5df; border-color: #dec48e; color: #674b12; }

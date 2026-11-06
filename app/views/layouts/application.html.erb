@@ -14,6 +14,7 @@
     <% if authenticated? %>
       <nav aria-label="Main navigation">
         <%= link_to "Inbox", messages_path %><%= link_to "Domains", domains_path %>
+        <%= link_to "Blocked senders", blocked_senders_path %>
         <%= link_to "Drafts", drafts_path %><%= link_to "API keys", api_keys_path %>
         <%= link_to "Audit", audit_events_path %><%= link_to "Settings", settings_path %>
         <%= button_to "Sign out", session_path, method: :delete, class: "link-button" %>

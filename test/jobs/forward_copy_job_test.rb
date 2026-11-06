@@ -26,6 +26,47 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     assert_empty ActionMailer::Base.deliveries
   end
 
+  test "queued copies obey changes to domain forwarding mode and addresses" do
+    @domain.update!(forward_mode: "off")
+    ForwardCopyJob.perform_now(@record.id)
+    assert_equal "skipped:forward_off", @record.reload.forward_status
+    assert_empty ActionMailer::Base.deliveries
+    @domain.update!(forward_mode: "listed", forward_addresses: [ "other" ])
+    ForwardCopyJob.perform_now(@record.id)
+    assert_equal "skipped:not_listed", @record.reload.forward_status
+    assert_empty ActionMailer::Base.deliveries
+    @domain.update!(forward_addresses: [ "INBOX@EXAMPLE.ORG" ])
+    Mailroom.stub(:forward_sender, "forward@example.org") { ForwardCopyJob.perform_now(@record.id) }
+    assert_equal "sent", @record.reload.forward_status
+    assert_equal 1, ActionMailer::Base.deliveries.size
+  end
+
+  test "queued copies are blocked when the sender is blocked after intake" do
+    BlockedSender.create!(pattern: "example.net")
+    ForwardCopyJob.perform_now(@record.id)
+    assert @record.reload.blocked?
+    assert_equal "skipped:blocked", @record.forward_status
+    assert_empty ActionMailer::Base.deliveries
+  end
+
+  test "stored blocked mail stays blocked even if the pattern is removed" do
+    @record.update!(blocked: true)
+    ForwardCopyJob.perform_now(@record.id)
+    assert_equal "skipped:blocked", @record.reload.forward_status
+    assert_empty ActionMailer::Base.deliveries
+  end
+
+  test "throttle normalizes senders and does not share counters between addresses" do
+    cache = ActiveSupport::Cache::MemoryStore.new
+    Rails.stub(:cache, cache) do
+      5.times { assert ForwardThrottle.allow?(" SENDER@EXAMPLE.NET ") }
+      assert_not ForwardThrottle.allow?("sender@example.net")
+      assert ForwardThrottle.allow?("other@example.net")
+      key = "forward-throttle:#{Digest::SHA256.hexdigest('sender@example.net')}"
+      assert_equal 6, cache.read(key)
+    end
+  end
+
   test "missing sender warns once and skips" do
     warnings = []
     Mailroom.stub(:forward_sender, nil) do

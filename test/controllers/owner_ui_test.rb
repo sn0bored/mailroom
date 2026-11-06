@@ -41,16 +41,16 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     draft = create_draft
     key, = create_api_key
     delete session_path
-    [root_path, messages_path, message_path(message), domains_path, new_domain_path, domain_path(@domain),
+    [ root_path, messages_path, message_path(message), domains_path, new_domain_path, domain_path(@domain),
      drafts_path, new_draft_path, draft_path(draft), api_keys_path, new_api_key_path,
-     audit_events_path, settings_path, message_attachment_path(message, 1)].each do |path|
+     audit_events_path, settings_path, blocked_senders_path, message_attachment_path(message, 1) ].each do |path|
       get path
       assert_redirected_to new_session_path
     end
-    [[:post, domains_path], [:patch, domain_path(@domain)], [:post, probe_domain_path(@domain)],
-     [:patch, message_path(message)], [:post, drafts_path], [:patch, draft_path(draft)],
-     [:post, deliver_draft_path(draft)], [:post, api_keys_path], [:delete, api_key_path(key)],
-     [:patch, settings_path]].each do |method, path|
+    [ [ :post, domains_path ], [ :patch, domain_path(@domain) ], [ :post, probe_domain_path(@domain) ],
+     [ :patch, message_path(message) ], [ :post, drafts_path ], [ :patch, draft_path(draft) ],
+     [ :post, deliver_draft_path(draft) ], [ :post, api_keys_path ], [ :delete, api_key_path(key) ],
+     [ :patch, settings_path ], [ :post, blocked_senders_path ], [ :delete, blocked_sender_path(1) ] ].each do |method, path|
       public_send(method, path)
       assert_redirected_to new_session_path
     end
@@ -76,6 +76,138 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "original_to"
     assert_includes response.body, "Spam score: 5.2"
     assert_includes response.body, "example.org"
+  end
+
+  test "inbox groups domains with newest mail first and unrouted last" do
+    other = Domain.create!(name: "example.net")
+    older = create_message(subject: "Older", received_at: 2.hours.ago)
+    newer = create_message(subject: "Newer", received_at: 1.hour.ago, read_at: Time.current)
+    create_message(domain: other, to_address: "hello@example.net", subject: "Other domain")
+    create_message(domain: nil, subject: "Unrouted message")
+    create_message(blocked: true)
+    get messages_path
+    assert_response :ok
+    assert_select "section.domain-group", 3
+    assert_select "section.domain-group:last-of-type h2", text: /Unrouted.*1 unread/m
+    assert_select "#domain-heading-#{@domain.id}", text: /example.org.*1 unread/m
+    assert_select "#domain-heading-#{@domain.id} a[href=?]", domain_path(@domain)
+    rows = css_select("#domain-heading-#{@domain.id} + .message-list .subject")
+    assert_equal [ newer.subject, older.subject ], rows.map(&:text)
+    assert_select ".domain-unread a[href=?]", "/messages?domain=example.org", text: "example.org: 1 unread"
+    assert_select ".recipient", text: "To: hello@example.net"
+    get messages_path, params: { group: "none" }
+    assert_select "section.domain-group", 0
+    assert_select ".message-row", 4
+    assert_select "select[name=group] option[selected]", text: "Flat list"
+  end
+
+  test "blocked inbox shows retained messages and all status pills" do
+    blocked = create_message(blocked: true, list_mail: true, spam_score: 7.5,
+      forward_status: "skipped:blocked", from_name: "Example Sender")
+    get messages_path
+    assert_select ".message-row", 0
+    get messages_path, params: { blocked: "1" }
+    assert_select ".message-row", 1
+    assert_select ".message-row .pill", text: "blocked"
+    assert_select ".message-row .pill", text: "list"
+    assert_select ".message-row .pill", text: "skipped: blocked"
+    assert_select ".message-row .pill", text: "Spam score: 7.5"
+    assert_select ".message-row .row span", text: "Example Sender <sender@example.net>"
+    assert_select "a[href=?]", message_path(blocked)
+  end
+
+  test "blocked senders page adds validates lists and removes patterns" do
+    get blocked_senders_path
+    assert_response :ok
+    assert_select "nav a[href=?]", blocked_senders_path, text: "Blocked senders"
+    assert_select "input[name='blocked_sender[pattern]']"
+    assert_select "input[name='blocked_sender[note]']"
+    post blocked_senders_path, params: { blocked_sender: { pattern: " SPAM@Example.NET ", note: "Dictionary mail" } }
+    sender = BlockedSender.find_by!(pattern: "spam@example.net")
+    assert_redirected_to blocked_senders_path
+    follow_redirect!
+    assert_select "td", text: "Dictionary mail"
+    assert_select "td", text: sender.pattern
+    assert_select "a[href=?]", messages_path(blocked: "1")
+    assert_no_difference "BlockedSender.count" do
+      post blocked_senders_path, params: { blocked_sender: { pattern: "SPAM@example.net" } }
+      assert_response :unprocessable_entity
+      post blocked_senders_path, params: { blocked_sender: { pattern: "invalid" } }
+      assert_response :unprocessable_entity
+    end
+    delete blocked_sender_path(sender)
+    assert_redirected_to blocked_senders_path
+    assert_not BlockedSender.blocks?("spam@example.net")
+  end
+
+  test "message buttons submit exact sender and sender domain blocks" do
+    message = create_message
+    get message_path(message)
+    assert_select "form[action=?]", blocked_senders_path, count: 2
+    assert_select "input[name='blocked_sender[pattern]'][value='sender@example.net']"
+    assert_select "input[name='blocked_sender[pattern]'][value='example.net']"
+    assert_select "button", text: "Block sender"
+    assert_select "button", text: "Block sender's domain"
+    post blocked_senders_path, params: { blocked_sender: { pattern: message.from_address } }
+    assert BlockedSender.blocks?(message.from_address)
+    post blocked_senders_path, params: { blocked_sender: { pattern: message.from_address.split("@").last } }
+    assert BlockedSender.blocks?("other@example.net")
+  end
+
+  test "domain forward controls round trip and show aggregate counters" do
+    create_message(forward_status: "sent")
+    create_message(forward_status: "skipped:spam")
+    create_message(forward_status: "skipped:spam")
+    create_message(forward_status: "skipped:not_listed")
+    patch domain_path(@domain), params: { domain: { forward_mode: "listed",
+      forward_addresses: " HELLO\r\nSales@Example.ORG\n\nhello\n", forward_copy_to: "copy@example.net",
+      forward_copy_max_spam: "4.5", send_enabled: "1" } }
+    assert_redirected_to domain_path(@domain)
+    assert_equal "listed", @domain.reload.forward_mode
+    assert_equal [ "hello", "sales@example.org" ], @domain.forward_addresses
+    assert_equal "copy@example.net", @domain.forward_copy_to
+    assert_equal 4.5, @domain.forward_copy_max_spam
+    assert @domain.send_enabled?
+    follow_redirect!
+    assert_select "input[type=radio][name='domain[forward_mode]']", 3
+    assert_select "input[type=radio][value=listed][checked]"
+    assert_select "textarea[name='domain[forward_addresses]']", text: "hello\nsales@example.org"
+    assert_select ".domain-counts dt", text: "Messages"
+    assert_select ".domain-counts dd:first-of-type", text: "4"
+    assert_select ".domain-counts dd:nth-of-type(2)", text: "1"
+    assert_select ".domain-counts dd:nth-of-type(3)", text: /3/
+    assert_select ".domain-counts li", text: "spam: 2"
+    assert_select ".domain-counts li", text: "not_listed: 1"
+    patch domain_path(@domain), params: { domain: { forward_mode: "off", forward_addresses: "", send_enabled: "0" } }
+    assert_equal "off", @domain.reload.forward_mode
+    assert_empty @domain.forward_addresses
+    assert_not @domain.send_enabled?
+    patch domain_path(@domain), params: { domain: { forward_mode: "invalid" } }
+    assert_response :unprocessable_entity
+    assert_equal "off", @domain.reload.forward_mode
+  end
+
+  test "settings show default threshold and save a decimal threshold" do
+    get settings_path
+    assert_select "input[name='settings[inbound_spam_threshold]'][value='15.0']"
+    assert_select "#spam-threshold-help", text: /only takes effect after.*mailroom:postmark:configure.*runs again/m
+    patch settings_path, params: { settings: { inbound_spam_threshold: "12.5" } }
+    assert_redirected_to settings_path
+    assert_equal "12.5", Setting.get("inbound_spam_threshold")
+    follow_redirect!
+    assert_select "input[name='settings[inbound_spam_threshold]'][value='12.5']"
+  end
+
+  test "invalid spam thresholds do not overwrite settings" do
+    Setting.set("inbound_spam_threshold", "12.5")
+    Setting.set("default_forward_to", "copy@example.org")
+    [ "", "invalid" ].each do |threshold|
+      patch settings_path, params: { settings: { inbound_spam_threshold: threshold, default_forward_to: "other@example.net" } }
+      assert_response :unprocessable_entity
+      assert_equal "12.5", Setting.get("inbound_spam_threshold")
+      assert_equal "copy@example.org", Setting.get("default_forward_to")
+      assert_select ".alert", text: /not a number/
+    end
   end
 
   test "inbox filters combine domain unread archived unrouted and search" do

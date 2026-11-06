@@ -1,15 +1,32 @@
 <h1>Inbox</h1>
+<nav class="domain-unread" aria-label="Unread by domain">
+  <% @domains.each do |domain| %>
+    <%= link_to "#{domain.name}: #{@unread_counts.fetch(domain.id, 0)} unread", messages_path(params: request.query_parameters.except("page", "unrouted").merge("domain" => domain.name)), class: "pill" %>
+  <% end %>
+</nav>
 <%= form_with url: messages_path, method: :get, class: "filters" do |form| %>
   <div><%= form.label :q, "Search" %><%= form.search_field :q, value: params[:q] %></div>
-  <div><%= form.label :domain, "Domain" %><%= form.select :domain, options_for_select(Domain.order(:name).pluck(:name), params[:domain]), include_blank: "All domains" %></div>
-  <% %w[unrouted unread archived].each do |filter| %>
+  <div><%= form.label :domain, "Domain" %><%= form.select :domain, options_for_select(@domains.map(&:name), params[:domain]), include_blank: "All domains" %></div>
+  <div><%= form.label :group, "Group" %><%= form.select :group, options_for_select([["By domain", "domain"], ["Flat list", "none"]], @group_by_domain ? "domain" : "none") %></div>
+  <% %w[unrouted unread archived blocked].each do |filter| %>
     <label class="check"><%= check_box_tag filter, "1", params[filter] == "1" %><%= filter.capitalize %></label>
   <% end %>
   <%= form.submit "Filter" %><%= link_to "Clear", messages_path %>
 <% end %>
-<%= render "list", messages: @messages %>
+<% if @group_by_domain && @messages.any? %>
+  <% @message_groups.each do |domain, messages| %>
+    <section class="domain-group" aria-labelledby="domain-heading-<%= domain&.id || 'unrouted' %>">
+      <h2 id="domain-heading-<%= domain&.id || 'unrouted' %>"><%= domain ? link_to(domain.name, domain_path(domain)) : "Unrouted" %>
+        <span class="pill"><%= @unread_counts.fetch(domain&.id, 0) %> unread</span>
+      </h2>
+      <%= render "list", messages: messages %>
+    </section>
+  <% end %>
+<% else %>
+  <%= render "list", messages: @messages %>
+<% end %>
 <nav class="pagination" aria-label="Pages">
-  <% if @page > 1 %><%= link_to "Previous", messages_path(request.query_parameters.merge(page: @page - 1)) %><% end %>
+  <% if @page > 1 %><%= link_to "Previous", messages_path(params: request.query_parameters.merge("page" => @page - 1)) %><% end %>
   <span>Page <%= @page %></span>
-  <% if @has_next %><%= link_to "Next", messages_path(request.query_parameters.merge(page: @page + 1)) %><% end %>
+  <% if @has_next %><%= link_to "Next", messages_path(params: request.query_parameters.merge("page" => @page + 1)) %><% end %>
 </nav>

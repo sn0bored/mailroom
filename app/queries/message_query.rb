@@ -10,6 +10,7 @@ class MessageQuery
 
   def resolve
     scope = Message.newest_first
+    scope = scope.where(blocked: truthy?(@p[:blocked]))
     scope = truthy?(@p[:archived]) ? scope.archived : scope.inbox
     if @p[:domain].present?
       scope = scope.joins(:domain).where(domains: { name: @p[:domain].to_s.strip.downcase })

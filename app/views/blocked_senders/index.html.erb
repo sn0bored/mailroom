@@ -1,0 +1,18 @@
+<h1>Blocked senders</h1>
+<p>Messages from blocked senders are kept in the blocked inbox and never forwarded.</p>
+<%= link_to "View blocked messages", messages_path(blocked: "1") %>
+<%= render "shared/errors", record: @blocked_sender %>
+<%= form_with model: @blocked_sender, class: "narrow" do |form| %>
+  <%= form.label :pattern, "Address or domain" %>
+  <%= form.text_field :pattern, required: true, placeholder: "spam@example.net or example.net" %>
+  <%= form.label :note %><%= form.text_field :note %>
+  <%= form.submit "Block sender" %>
+<% end %>
+<div class="table-scroll"><table>
+  <thead><tr><th>Address or domain</th><th>Note</th><th>Added</th><th>Action</th></tr></thead>
+  <tbody><% @blocked_senders.each do |sender| %><tr>
+    <td><%= sender.pattern %></td><td><%= sender.note %></td><td><%= display_time(sender.created_at) %></td>
+    <td><%= button_to "Remove", blocked_sender_path(sender), method: :delete %></td>
+  </tr><% end %></tbody>
+</table></div>
+<% if @blocked_senders.empty? %><p>No blocked senders.</p><% end %>
