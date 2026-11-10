@@ -66,8 +66,9 @@ bin/mailroom-server
   `tailscale funnel --bg --https=443 --set-path=/rails/action_mailbox http://127.0.0.1:3100/rails/action_mailbox`
   for the Postmark webhook (public, that path only). Install the `launchd/` templates for the server,
   the nightly backup and the hourly Postmark retry; replace `__REPO__` and `__HOME__` first.
-- **A VPS:** the generated Kamal config and Dockerfile work as a starting point; any reverse proxy
-  with TLS in front of port 3100 is enough.
+- **A VPS:** the committed Kamal config is a starting point — bring your own Dockerfile (the Rails 8
+  default that `kamal init` or `bin/rails app:update` generates works); any reverse proxy with TLS in
+  front of port 3100 is enough.
 
 Postmark retries a failing webhook for about ten hours. `mailroom:postmark:retry_failed` asks it to
 retry anything older; run it hourly (template included) and after any outage.

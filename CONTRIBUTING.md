@@ -16,7 +16,7 @@ Requirements: Ruby (see `.ruby-version`), SQLite 3, and Bundler.
 ```bash
 git clone https://github.com/sn0bored/mailroom && cd mailroom
 bundle install
-cp .env.example .env            # fill in only what a test run needs
+cp .env.example .env            # reference only — not auto-loaded in dev/test; the suite needs nothing from it
 bin/rails db:prepare
 bin/rails test                  # the suite runs without a Postmark account
 ```
@@ -41,7 +41,8 @@ host, path, address, or key.
    ```
 
 5. Open a pull request against `main`. Describe what changed and how you tested it. CI
-   (`.github/workflows/ci.yml`) runs RuboCop, Brakeman, and the test suite on every PR.
+   (`.github/workflows/ci.yml`) runs RuboCop, Brakeman, an importmap/JS audit (`bin/importmap audit`),
+   and the test suite on every PR.
 
 ## Style
 
