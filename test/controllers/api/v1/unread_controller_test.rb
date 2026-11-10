@@ -25,6 +25,12 @@ class ApiUnreadControllerTest < ActionDispatch::IntegrationTest
     assert_response :unauthorized
   end
 
+  test "a key without the mail:read scope is forbidden" do
+    _, send_only = ApiKey.generate(name: "Sender", scopes: [ "mail:send" ])
+    get_unread(send_only)
+    assert_response :forbidden
+  end
+
   test "reports total and per-domain unread counts" do
     inbound(@pollystop, read: false)
     inbound(@pollystop, read: false)

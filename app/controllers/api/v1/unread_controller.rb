@@ -2,6 +2,8 @@ module Api
   module V1
     class UnreadController < BaseController
       def show
+        return unless require_scope!("mail:read")
+
         counts = unread_counts_by_domain_id
         domains = Domain.active.order(:name).map do |domain|
           { domain: domain.name, unread: counts[domain.id].to_i }
