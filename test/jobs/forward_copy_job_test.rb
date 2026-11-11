@@ -3,6 +3,8 @@ require_relative "../support/outbound_stubs"
 using OutboundStubs
 
 class ForwardCopyJobTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
   setup do
     ActionMailer::Base.deliveries.clear
     @domain = Domain.create!(name: "example.org", forward_copy_to: "owner@example.net")
@@ -117,6 +119,17 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
       @record.stub(:raw_source, raw) { assert_equal "<p>original</p>", ForwardMailer.copy(@record).message.html_part.decoded }
       @record.stub(:raw_source, -> { raise ArgumentError }) { assert_nil ForwardMailer.copy(@record).message.html_part }
     end
+  end
+
+  test "transient transport failures retry before giving up" do
+    attempts = 0
+    Mailroom.stub(:forward_sender, "forward@example.org") do
+      ForwardMailer.stub(:copy, ->(*) { attempts += 1; raise Postmark::TimeoutError.new(StandardError.new("private")) }) do
+        perform_enqueued_jobs(only: ForwardCopyJob) { ForwardCopyJob.perform_later(@record.id) }
+      end
+    end
+    assert_equal 3, attempts, "transient transport errors should be retried like outbound delivery"
+    assert_equal "failed:Postmark::TimeoutError", @record.reload.forward_status
   end
 
   test "failure status contains only class" do

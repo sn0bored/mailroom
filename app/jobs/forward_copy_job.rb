@@ -1,6 +1,11 @@
 class ForwardCopyJob < ApplicationJob
   FORWARD_COPIES_PER_SENDER_PER_HOUR = Integer(ENV.fetch("MAILROOM_FORWARD_PER_SENDER_HOURLY", "5"))
 
+  retry_on(*TRANSPORT_ERRORS, wait: 5.seconds, attempts: 3) do |job, error|
+    message = Message.find_by(id: job.arguments.first)
+    message&.update!(forward_status: "failed:#{error.class.name}")
+  end
+
   def perform(message_id)
     message = Message.find(message_id)
     if message.blocked? || BlockedSender.blocks?(message.from_address)
@@ -37,6 +42,8 @@ class ForwardCopyJob < ApplicationJob
 
     ForwardMailer.copy(message).deliver_now
     message.update!(forward_status: "sent")
+  rescue *TRANSPORT_ERRORS
+    raise
   rescue StandardError => error
     raise unless message
     message.update!(forward_status: "failed:#{error.class.name}")
