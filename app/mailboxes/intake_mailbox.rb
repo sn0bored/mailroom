@@ -33,9 +33,22 @@ class IntakeMailbox < ApplicationMailbox
 
   def duplicate_of(resolution)
     id = mail.message_id.presence or return nil
-    Message.where(rfc822_message_id: id).where("received_at > ?", DUPLICATE_WINDOW.ago).first
+    prior = Message.where(rfc822_message_id: id).where("received_at > ?", DUPLICATE_WINDOW.ago).to_a
+    return nil if prior.empty?
+    # Collapse only when this copy would land where an existing copy already did, or when it
+    # has no forward target of its own (nothing to lose by merging). A second owned domain
+    # with a distinct, not-yet-forwarded target is a genuine separate delivery — merging it
+    # would silently drop that recipient's whole forwarded copy.
+    target = forward_target_for(resolution)
+    return prior.first if target.blank? || prior.any? { |m| m.domain&.forward_target == target }
+    nil
   rescue StandardError
     nil
+  end
+
+  def forward_target_for(resolution)
+    domain = resolution.primary && Domain.for_address(resolution.primary)
+    domain&.forward_target
   end
 
   def merge_duplicate(existing, resolution)
