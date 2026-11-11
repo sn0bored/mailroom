@@ -151,6 +151,28 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_enqueued_with(job: ForwardCopyJob, args: [ second.id ])
   end
 
+  test "a re-delivery to one of several distinct-target domains merges into that domain's row" do
+    org_domain = @domain
+    com_domain = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
+    to_com = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+
+    org = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    com = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + to_com)
+    # A third webhook: the same Message-ID delivered to example.com again (a provider re-delivery).
+    # Vary only the ignored provider address so the raw bytes differ and ActionMailbox's own
+    # checksum dedup lets it through to our routing-level dedup.
+    redelivery = receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\n" + to_com)
+
+    assert_equal org_domain, org.domain
+    assert_equal com_domain, com.domain
+    assert_nil redelivery, "the re-delivery is a true duplicate of the example.com copy"
+    assert_equal 2, Message.count
+    assert com.reload.routing_trace.any? { |t| t["header"] == "duplicate" },
+      "the duplicate merged into the matching example.com row"
+    assert_not org.reload.routing_trace.any? { |t| t["header"] == "duplicate" },
+      "the unrelated example.org row is left untouched"
+  end
+
   test "a duplicate to a second domain sharing the same forward target still merges into one row" do
     Domain.create!(name: "example.com", forward_copy_to: "owner@example.net")
     first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
