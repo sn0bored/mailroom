@@ -35,7 +35,9 @@ class ForwardCopyJob < ApplicationJob
       return
     end
 
-    unless ForwardThrottle.allow?(message.from_address)
+    # Only consume a throttle slot on the first attempt; a transport-error retry is the
+    # same already-admitted copy and must not re-increment the per-sender hourly counter.
+    if executions <= 1 && !ForwardThrottle.allow?(message.from_address)
       message.update!(forward_status: "skipped:throttled")
       return
     end

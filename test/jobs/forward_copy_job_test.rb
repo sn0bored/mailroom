@@ -121,14 +121,18 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     end
   end
 
-  test "transient transport failures retry before giving up" do
+  test "transient transport failures retry without re-consuming the throttle" do
     attempts = 0
+    throttle_checks = 0
     Mailroom.stub(:forward_sender, "forward@example.org") do
-      ForwardMailer.stub(:copy, ->(*) { attempts += 1; raise Postmark::TimeoutError.new(StandardError.new("private")) }) do
-        perform_enqueued_jobs(only: ForwardCopyJob) { ForwardCopyJob.perform_later(@record.id) }
+      ForwardThrottle.stub(:allow?, ->(*) { throttle_checks += 1; true }) do
+        ForwardMailer.stub(:copy, ->(*) { attempts += 1; raise Postmark::TimeoutError.new(StandardError.new("private")) }) do
+          perform_enqueued_jobs(only: ForwardCopyJob) { ForwardCopyJob.perform_later(@record.id) }
+        end
       end
     end
     assert_equal 3, attempts, "transient transport errors should be retried like outbound delivery"
+    assert_equal 1, throttle_checks, "retries must not re-consume the per-sender throttle budget"
     assert_equal "failed:Postmark::TimeoutError", @record.reload.forward_status
   end
 
