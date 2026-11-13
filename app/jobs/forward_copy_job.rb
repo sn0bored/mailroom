@@ -1,18 +1,25 @@
+# Claims mirror OutboundDeliveryJob: only a later execution of the owning job can retry
+# a sending row. Transport retries remain at-least-once if the provider accepted a copy
+# but its response was lost. A same-execution redispatch must never send again.
 class ForwardCopyJob < ApplicationJob
   FORWARD_COPIES_PER_SENDER_PER_HOUR = Integer(ENV.fetch("MAILROOM_FORWARD_PER_SENDER_HOURLY", "5"))
 
   retry_on(*TRANSPORT_ERRORS, wait: 5.seconds, attempts: 3) do |job, error|
     message = Message.find_by(id: job.arguments.first)
-    message&.update!(forward_status: "failed:#{error.class.name}")
+    job.mark_failed(message, error) if message
   end
 
   def perform(message_id)
-    message = Message.find(message_id)
+    message = claim(message_id)
+    return unless message
     if message.blocked? || BlockedSender.blocks?(message.from_address)
       message.update!(blocked: true, forward_status: "skipped:blocked")
       return
     end
-    return if message.domain.nil?
+    if message.domain.nil?
+      message.update!(forward_status: "skipped:unrouted")
+      return
+    end
     if message.domain.forward_target.blank?
       message.update!(forward_status: "skipped:no_target")
       return
@@ -43,11 +50,38 @@ class ForwardCopyJob < ApplicationJob
     end
 
     ForwardMailer.copy(message).deliver_now
-    message.update!(forward_status: "sent")
+    record_sent(message)
   rescue *TRANSPORT_ERRORS
     raise
   rescue StandardError => error
     raise unless message
-    message.update!(forward_status: "failed:#{error.class.name}")
+    mark_failed(message, error)
+  end
+
+  def mark_failed(message, error)
+    Message.where(id: message.id, forward_status: "sending", forward_job_id: job_id,
+      forward_attempt: executions).update_all(forward_status: "failed:#{error.class.name}", updated_at: Time.current)
+  end
+
+  private
+
+  def claim(id)
+    claimable = Message.where(id: id, forward_status: "queued")
+      .or(Message.where(id: id, forward_status: "sending", forward_job_id: job_id).where("forward_attempt < ?", executions))
+    claimed = claimable.update_all(forward_status: "sending", forward_job_id: job_id,
+      forward_attempt: executions, updated_at: Time.current)
+    return Message.find(id) if claimed == 1
+
+    Rails.logger.info("ForwardCopyJob: skipped message #{id} for job #{job_id} execution #{executions}; no claim available")
+    nil
+  end
+
+  def record_sent(message)
+    message.update_columns(forward_status: "sent", updated_at: Time.current)
+    Audit.record("forward.sent", target: message)
+  rescue StandardError => error
+    # Never retry after provider acceptance, even for a transport-class bookkeeping error.
+    # If recording sent itself fails, the sweep reports an unknown outcome without resending.
+    Rails.logger.error("ForwardCopyJob: message #{message.id} was delivered, but recording it failed (#{error.class.name})")
   end
 end

@@ -56,6 +56,51 @@ message is hostile until a human says otherwise.
   overrides it. Mailroom only uses the score to decide whether to forward a copy; nothing is dropped.
 - There is one owner account and no roles.
 
+## Large uploads and temporary disk space
+
+Puma reads request bodies before the ingress gate or authentication runs. Large bodies are spooled
+to temporary files, including unauthenticated uploads. The 100 MiB request limit bounds one upload,
+not total disk use: five concurrent 99 MB uploads held about 472 MiB of temporary files for roughly
+30 seconds in testing. Enough concurrent uploads can exhaust temporary disk space and disrupt mail.
+Chunked uploads can consume space before reaching the size limit, too.
+
+Puma now uses a 10-second `first_data_timeout` and a 5-second `persistent_timeout`.
+In Puma 8.0.2, the former also applies while a body is incomplete; each incomplete read resets it.
+The latter applies when waiting for another request on a keep-alive connection, including an
+incomplete next request, until the reactor resets it to `first_data_timeout`.
+These settings shorten stalled uploads, but neither is a total upload deadline or minimum data rate.
+A client that keeps trickling data can retain its file. See `lib/puma/server.rb:321-328,491-501,515-535`
+and cleanup in `lib/puma/client.rb:194-206,350-352` in the Puma 8.0.2 source.
+
+The reference deployment uses Tailscale Funnel, which does not provide configurable request-body
+or per-client connection limits. Puma has no per-listener concurrent-connection cap. The timeouts
+therefore leave a disk-exhaustion risk on that deployment.
+
+On a VPS, put a reverse proxy in front of the public listener and configure both a body size limit
+and per-IP connection limits. For nginx, add the zone in the `http` context and the other directives
+to the existing public TLS `server` block (complete TLS setup is omitted):
+
+```nginx
+# http context
+limit_conn_zone $binary_remote_addr zone=mailroom_uploads:10m;
+
+# public server context
+client_max_body_size 100m;
+client_body_timeout 10s;
+limit_conn mailroom_uploads 2;
+
+location / {
+    proxy_pass http://127.0.0.1:3101;
+}
+```
+
+Use the configured public port, never the internal listener. Tune concurrency for legitimate
+webhook traffic. nginx counts connections after reading request headers and counts concurrent
+HTTP/2 and HTTP/3 requests separately. Use the actual client IP; only accept forwarded IP headers
+from a trusted upstream. Proxy buffering also uses temporary disk, and distributed clients can
+exceed a per-IP budget, so monitor disk space and consider an aggregate proxy limit as well.
+See nginx's `client_max_body_size`, `client_body_timeout`, and `limit_conn` documentation.
+
 ## Reporting
 
 Email the maintainer address listed on the repository profile. If private security advisories are

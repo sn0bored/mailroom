@@ -70,9 +70,10 @@ class IntakeMailbox < ApplicationMailbox
   def raw_body_digest
     @raw_body_digest ||= begin
       body = inbound_email.source.to_s.b.split(/\r?\n\r?\n/, 2)[1].to_s
-      values = %w[From To Cc Subject].map do |name|
-        mail.header.fields.select { |field| field.name.casecmp?(name) }.map do |field|
-          field.value.to_s.b.gsub(/\r\n?/, "\n").gsub(/\n[ \t]+/, " ").gsub(/[ \t]+/, " ").strip
+      fields = MailHeaders.fields(inbound_email.source)
+      values = %w[from to cc subject].map do |name|
+        fields.select { |field_name, _| field_name == name }.map do |_, value|
+          value.to_s.b.gsub(/\r\n?/, "\n").gsub(/\n[ \t]+/, " ").gsub(/[ \t]+/, " ").strip
         end
       end
       # Length framing preserves field/value boundaries, even for malformed header bytes.
@@ -120,8 +121,8 @@ class IntakeMailbox < ApplicationMailbox
     end
     job = "ForwardCopyJob".safe_constantize
     if job
-      job.perform_later(message.id)
       message.update!(forward_status: "queued")
+      job.perform_later(message.id)
     else
       message.update!(forward_status: "skipped:no_forwarder")
     end

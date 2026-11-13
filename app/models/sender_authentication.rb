@@ -3,26 +3,30 @@
 class SenderAuthentication
   SPF_RESULTS = %w[pass fail softfail neutral none temperror permerror].freeze
 
-  attr_reader :dmarc, :spf, :dkim, :source
+  attr_reader :dmarc, :spf, :dkim, :source, :from_count
 
   def self.unknown = new(dmarc: "none", spf: "none", dkim: "none", source: nil)
 
   def self.parse(raw, from_address:)
-    fields = header_fields(raw)
+    fields = MailHeaders.fields(raw)
+    count = fields.count { |name, _| name == "from" }
+    return new(dmarc: "none", spf: "none", dkim: "none", source: "multiple_from", from_count: count) if count > 1
     from_domain = from_address.to_s.split("@").last.to_s.downcase
     provider = from_provider_signals(fields, from_domain)
     return unknown unless provider
     from_authentication_results(fields, from_domain) || provider
   end
 
-  def initialize(dmarc:, spf:, dkim:, source:)
+  def initialize(dmarc:, spf:, dkim:, source:, from_count: 1)
     @dmarc, @spf, @dkim, @source = dmarc, spf, dkim, source
+    @from_count = from_count
   end
 
   def known? = source.present?
-  def failed? = dmarc == "fail"
+  def failed? = from_count > 1 || dmarc == "fail"
 
   def summary(domain: nil)
+    return "unverified (multiple From headers)" if from_count > 1
     return "Unavailable" unless known?
     verdict = { "pass" => "verified", "fail" => "unverified" }.fetch(dmarc, "unknown")
     "#{verdict}#{" for #{domain}" if domain.present?} (DMARC #{dmarc}, SPF #{spf}, DKIM #{dkim})"
@@ -30,18 +34,6 @@ class SenderAuthentication
 
   class << self
     private
-
-    # [name, value] pairs in the order they appear, folded lines joined.
-    def header_fields(raw)
-      head = raw.to_s.b.split(/\r?\n\r?\n/, 2).first.to_s
-      head.each_line.with_object([]) do |line, fields|
-        if line.match?(/\A[ \t]/)
-          fields.last[1] = "#{fields.last[1]} #{line.strip}" if fields.any?
-        elsif (separator = line.index(":"))
-          fields << [ line[0, separator].strip.downcase, line[(separator + 1)..].strip ]
-        end
-      end
-    end
 
     def from_authentication_results(fields, from_domain)
       trusted = Mailroom.trusted_authserv_ids

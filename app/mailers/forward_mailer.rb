@@ -62,6 +62,7 @@ class ForwardMailer < ApplicationMailer
       [ "To", record.to_address ],
       [ "Date", (record.sent_at || record.received_at).to_s ]
     ]
+    rows << [ "Warning", "This message has #{auth.from_count} From headers" ] if auth.from_count > 1
     if auth.known?
       domain = record.from_address.to_s.split("@").last.to_s.downcase
       rows << [ "Sender check", auth.summary(domain: domain) ]

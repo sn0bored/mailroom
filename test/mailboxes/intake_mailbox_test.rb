@@ -11,6 +11,26 @@ class IntakeMailboxTest < ActiveSupport::TestCase
 
   teardown { ENV.delete("MAILROOM_FORWARD_SENDER") }
 
+  test "different first From fields are distinct even with the same last From and Message-ID" do
+    source = "From: First <first@example.net>\nFrom: Last <last@example.net>\n" \
+      "To: hello@example.org\nSubject: Subject\nMessage-ID: <multiple-from@example.net>\n\nBody"
+    first = receive_source(source)
+    second = receive_source(source.sub("first@example.net", "other@example.net"))
+    assert second, "different visible senders must not merge"
+    assert_not_equal first.id, second.id
+  end
+
+  test "forward status is queued before the worker can run" do
+    ENV["MAILROOM_FORWARD_SENDER"] = "forward@example.org"
+    seen = nil
+    ForwardCopyJob.stub(:perform_later, ->(id) { seen = Message.find(id).forward_status }) do
+      receive_source(forwarded_source)
+    end
+    assert_equal "queued", seen
+  ensure
+    ENV.delete("MAILROOM_FORWARD_SENDER")
+  end
+
   test "stores a forwarded message routed to its domain" do
     message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
     assert message, "message was stored"

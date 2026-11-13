@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_13_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_13_130000) do
   create_table "action_mailbox_inbound_emails", force: :cascade do |t|
     t.integer "status", default: 0, null: false
     t.string "message_id", null: false
@@ -132,6 +132,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_13_120000) do
     t.datetime "updated_at", null: false
     t.boolean "blocked", default: false, null: false
     t.string "raw_body_digest"
+    t.string "forward_job_id"
+    t.integer "forward_attempt"
     t.index ["domain_id", "received_at"], name: "index_messages_on_domain_id_and_received_at"
     t.index ["domain_id"], name: "index_messages_on_domain_id"
     t.index ["inbound_email_id"], name: "index_messages_on_inbound_email_id", unique: true

@@ -179,4 +179,26 @@ class ForwardMailerTest < ActiveSupport::TestCase
       assert_includes block, "Sender check: verified for evil.test"
     end
   end
+
+  test "multiple From fields store the first sender and warn in both banners" do
+    message = receive(provider_headers: AUTHENTIC + "fRoM: First Sender\n <first@example.net>\n")
+    assert_equal "first@example.net", message.from_address
+    assert_equal "First Sender", message.from_name
+    assert_includes message.routing_trace, { "header" => "multiple_from", "address" => "2" }
+    assert message.sender_authentication.failed?
+    assert_includes message.sender_authentication.summary, "unverified"
+    copy = copy_of(message)
+    assert copy.subject.start_with?("[unverified sender]")
+    assert_includes copy.text_part.decoded, "This message has 2 From headers"
+    assert_includes copy.html_part.decoded, "This message has 2 From headers"
+  end
+
+  test "a single From field keeps its sender and verdict without a warning" do
+    message = receive(provider_headers: AUTHENTIC, html: "<p>From: body@example.net</p>")
+    assert_equal "service@payments.example.com", message.from_address
+    assert_equal "Payment Provider", message.from_name
+    assert_not message.routing_trace.any? { |entry| entry["header"] == "multiple_from" }
+    assert_not message.sender_authentication.failed?
+    assert_not_includes copy_of(message).text_part.decoded, "From headers"
+  end
 end

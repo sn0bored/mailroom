@@ -1,4 +1,4 @@
-# Recovers outbound mail whose delivery job went missing. Solid Queue's scheduler runs it every few
+# Recovers outbound mail and forward copies whose delivery job went missing. Solid Queue's scheduler runs it every few
 # minutes (config/recurring.yml); it never sends anything itself.
 #
 # - Queued for longer than QUEUED_GRACE: the job was lost, for example because the process died
@@ -15,6 +15,7 @@ class OutboundSweepJob < ApplicationJob
   def perform
     requeue_lost_jobs
     fail_stale_deliveries
+    fail_stale_forward_copies
   end
 
   private
@@ -38,5 +39,10 @@ class OutboundSweepJob < ApplicationJob
 
       Audit.record("outbound.failed", actor: record.api_key || record.user, target: record, outcome: "failed")
     end
+  end
+
+  def fail_stale_forward_copies
+    Message.where(forward_status: "sending", updated_at: ...SENDING_TIMEOUT.ago)
+      .update_all(forward_status: "failed:outcome_unknown", updated_at: Time.current)
   end
 end

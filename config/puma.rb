@@ -63,6 +63,15 @@ plugin :mailroom_listeners
 # body to disk or calling the app. Chunked bodies are counted as they arrive.
 http_content_length_limit 100 * 1024 * 1024
 
+# Puma 8.0.2 lib/puma/server.rb:491-501 uses first_data_timeout for incomplete requests,
+# including bodies; :321-328 resets it after every incomplete read. This bounds idle time,
+# not total upload time: a steady trickle can still retain a tempfile indefinitely.
+# :515-535 uses persistent_timeout while waiting for the next keep-alive request (even if
+# partially read); the next incomplete reactor read switches to first_data_timeout.
+# lib/puma/client.rb:194-206,350-352 closes the tempfile when the client times out.
+first_data_timeout 10
+persistent_timeout 5
+
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart
 
