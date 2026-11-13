@@ -10,7 +10,7 @@ class McpControllerTest < ActionDispatch::IntegrationTest
 
   def rpc(method, params = {}, token: @read_token, id: 1)
     post "/mcp", params: { jsonrpc: "2.0", id: id, method: method, params: params }.to_json,
-                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{token}", "Host" => "localhost" }
+                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{token}" }
     response.parsed_body
   end
 

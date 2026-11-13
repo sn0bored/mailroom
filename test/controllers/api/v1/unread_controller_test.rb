@@ -2,7 +2,6 @@ require "test_helper"
 
 class ApiUnreadControllerTest < ActionDispatch::IntegrationTest
   setup do
-    host! "example.org:8443"
     @net_domain = Domain.create!(name: "example.net")
     @org_domain = Domain.create!(name: "example.org")
     _, @token = ApiKey.generate(name: "Heartbeat", scopes: [ "mail:read" ])

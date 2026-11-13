@@ -1,14 +1,13 @@
 ENV["RAILS_ENV"] ||= "test"
 ENV["RAILS_INBOUND_EMAIL_PASSWORD"] ||= "test-ingress-password"
 ENV["MAILROOM_INSTANCE_ID"] ||= "test-instance"
+ENV["MAILROOM_PORT"] = "3100"
+ENV["MAILROOM_PUBLIC_PORT"] = "3101"
+ENV.delete("MAILROOM_TRUST_LOCAL")
 require_relative "../config/environment"
 require "rails/test_help"
-
-# Integration requests default to localhost so the public ingress gate treats them as internal;
-# the gate's own tests pass explicit Host headers.
-class ActionDispatch::IntegrationTest
-  setup { host! "localhost" }
-end
+# Integration requests arrive on the internal listener by default; the gate's own tests pick a listener.
+require_relative "support/listeners"
 
 module ActiveSupport
   class TestCase

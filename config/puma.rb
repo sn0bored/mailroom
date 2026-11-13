@@ -27,8 +27,20 @@
 threads_count = ENV.fetch("RAILS_MAX_THREADS", 3)
 threads threads_count, threads_count
 
-# Specifies the `port` that Puma will listen on to receive requests; default is 3000.
-port ENV.fetch("PORT", 3000)
+# Mailroom's listeners. MAILROOM_PORT (default 3100) is the internal listener: owner UI, MCP and API.
+# MAILROOM_PUBLIC_PORT is the public listener: the Postmark webhook and /up, nothing else
+# (Mailroom::IngressGate decides by the listener a connection arrived on). Both bind loopback only.
+# Production refuses to boot without the public one (config/initializers/preflight.rb).
+# `rails server -b/-p` replaces these binds, which is why bin/mailroom-server starts Puma directly.
+internal_port = ENV.fetch("MAILROOM_PORT", "3100")
+public_port = ENV["MAILROOM_PUBLIC_PORT"].to_s.strip
+if public_port.empty?
+  # Development: one listener, the internal one.
+  port ENV.fetch("PORT", internal_port)
+else
+  bind "tcp://127.0.0.1:#{internal_port}"
+  bind "tcp://127.0.0.1:#{public_port}"
+end
 
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart

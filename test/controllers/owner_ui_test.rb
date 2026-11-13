@@ -6,7 +6,6 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
 
   setup do
     Rack::Attack.reset!
-    host! "example.org:8443"
     @user = User.create!(email_address: "owner@example.org", password: "test-password")
     @domain = Domain.create!(name: "example.org")
     sign_in_as(@user)

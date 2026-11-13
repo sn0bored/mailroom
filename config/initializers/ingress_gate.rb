@@ -1,49 +1,54 @@
-require "ipaddr"
-
 module Mailroom
-  # Defense in depth for the public side. Behind Tailscale, every request reaches Puma from
-  # 127.0.0.1, so loopback alone proves nothing. A request counts as internal when it carries a
-  # Tailscale identity header (Serve adds them, Funnel never does), when it arrived on the
-  # tailnet-only port, when its Host is the machine itself, when a forwarded client IP is inside the
-  # tailnet, or when MAILROOM_TRUST_LOCAL=1 (development only). Everything else may only reach the
-  # Action Mailbox ingress and the health check.
+  # Decides what a request may reach by the listener that accepted its connection, and by nothing the
+  # client sent. Puma runs two loopback listeners (config/puma.rb) and puts the accepted socket in
+  # env["puma.socket"] for every request on the connection; its local port says which listener it was.
+  #
+  # Only a connection accepted on the internal listener (MAILROOM_PORT) reaches the whole app. The public
+  # listener, an unknown listener and a request with no socket at all get the public rules: GET or HEAD
+  # /up, and POST to the Postmark ingress, which checks its own password. Everything else is a 404.
+  #
+  # Host, X-Forwarded-*, Forwarded and Tailscale-* headers are ignored on purpose: a proxy that forwards
+  # everything passes them through from the internet. So is SERVER_PORT, which Puma copies from Host.
+  # "puma.socket" itself cannot be set by a client, because request headers only reach env as HTTP_*.
   class IngressGate
-    TAILNET = [ IPAddr.new("100.64.0.0/10"), IPAddr.new("fd7a:115c:a1e0::/48") ].freeze
-    LOCAL_HOSTS = %w[localhost 127.0.0.1 [::1] ::1].freeze
-    ALLOWED_PREFIXES = [ Mailroom::INGRESS_PATH_PREFIX, "/up" ].freeze
-    INTERNAL_PORT = ENV.fetch("MAILROOM_SERVE_PORT", "8443")
+    SOCKET = "puma.socket".freeze
+    PUBLIC_ROUTES = {
+      "/up" => %w[GET HEAD].freeze,
+      Mailroom::POSTMARK_INGRESS_PATH => %w[POST].freeze
+    }.freeze
+
+    # The local port of the socket that accepted this request's connection, or nil when there is no
+    # TCP socket to ask.
+    def self.listener_port(env)
+      socket = env[SOCKET]
+      socket = socket.to_io if socket.respond_to?(:to_io) # an SSL listener wraps the TCP socket
+      return nil unless socket.respond_to?(:local_address)
+      address = socket.local_address
+      address.ip? ? address.ip_port : nil
+    rescue StandardError
+      nil
+    end
 
     def initialize(app)
       @app = app
     end
 
     def call(env)
-      request = Rack::Request.new(env)
-      return @app.call(env) if internal?(request) || allowed_path?(request.path)
+      return @app.call(env) if internal?(env) || public_route?(env)
       [ 404, { "content-type" => "text/plain" }, [ "not found\n" ] ]
     end
 
     private
 
-    def internal?(request)
+    def internal?(env)
       return true if Mailroom.trust_local?
-      return true if request.get_header("HTTP_TAILSCALE_USER_LOGIN").present?
-      host, port = request.host_with_port.to_s.split(":", 2)
-      return true if port == INTERNAL_PORT
-      return true if LOCAL_HOSTS.include?(host)
-      ip = forwarded_ip(request)
-      ip.present? && TAILNET.any? { |net| net.include?(ip) }
+      internal = Mailroom.internal_port
+      return false if internal.nil? || internal == Mailroom.public_port
+      self.class.listener_port(env) == internal
     end
 
-    def allowed_path?(path)
-      ALLOWED_PREFIXES.any? { |prefix| path.start_with?(prefix) }
-    end
-
-    def forwarded_ip(request)
-      raw = request.get_header("HTTP_X_FORWARDED_FOR").to_s.split(",").map(&:strip).reject(&:empty?).last
-      raw.present? ? IPAddr.new(raw) : nil
-    rescue IPAddr::Error
-      nil
+    def public_route?(env)
+      PUBLIC_ROUTES.fetch(env["PATH_INFO"], []).include?(env["REQUEST_METHOD"])
     end
   end
 end
