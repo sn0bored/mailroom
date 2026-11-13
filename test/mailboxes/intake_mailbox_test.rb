@@ -321,4 +321,48 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_equal @domain, message.domain
     assert_equal "hello@example.org", message.to_address
   end
+
+  def nested_source(depth)
+    body = +""
+    depth.times { |i| body << "Content-Type: multipart/mixed; boundary=\"b#{i}\"\n\n--b#{i}\n" }
+    body << "Content-Type: text/html\n\n<p>leaf</p>\n"
+    (depth - 1).downto(0) { |i| body << "--b#{i}--\n" }
+    "X-Original-To: hello@example.org\nFrom: Mallory <m@sender.example.net>\nTo: hello@example.org\n" \
+      "Subject: nest #{depth}\nMessage-ID: <nest-#{depth}@sender.example.net>\nMIME-Version: 1.0\n" + body
+  end
+
+  test "over-deep MIME is stored unparsed as an error and not forwarded" do
+    [ 33, 3000 ].each do |depth|
+      inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(nested_source(depth))
+      assert_no_enqueued_jobs(only: ForwardCopyJob) do
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        inbound.route
+        assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2, "depth #{depth} is not parsed"
+      end
+      assert inbound.reload.delivered?, "depth #{depth} leaves nothing in processing"
+      message = Message.find_by!(inbound_email_id: inbound.id)
+      assert_equal "error", message.routed_via
+      assert_equal "MimeTooDeep", message.parse_error
+      assert_equal "skipped:mime_too_deep", message.forward_status
+      assert_equal "nest #{depth}", message.subject
+      assert_equal "m@sender.example.net", message.from_address
+      assert_includes message.routing_trace, { "header" => "mime_depth", "address" => "over 32 levels, not parsed" }
+      assert_equal nested_source(depth), message.raw_source, "the raw message is kept"
+    end
+  end
+
+  test "ordinary nesting is still parsed" do
+    message = receive_source(nested_source(4))
+    assert_equal "hdr:X-Original-To", message.routed_via
+    assert message.has_html
+  end
+
+  test "a stack overflow while parsing still leaves a row and nothing in processing" do
+    inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(forwarded_source)
+    Intake::MessageBuilder.stub(:new, ->(*) { raise SystemStackError, "stack level too deep" }) { inbound.route }
+    assert inbound.reload.delivered?
+    message = Message.find_by!(inbound_email_id: inbound.id)
+    assert_equal "error", message.routed_via
+    assert_equal "SystemStackError", message.parse_error
+  end
 end

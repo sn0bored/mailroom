@@ -3,8 +3,13 @@
 class IntakeMailbox < ApplicationMailbox
   DUPLICATE_WINDOW = 48.hours
   PROBE_LOCAL_PART = /\Aprobe-([0-9a-f]+)\z/i
+  # Real mail nests a handful of levels. Past this we keep the raw message and parse nothing.
+  MAX_MIME_DEPTH = 32
 
   def process
+    depth = Intake::MimeDepth.call(inbound_email.source, limit: MAX_MIME_DEPTH)
+    return store_too_deep if depth > MAX_MIME_DEPTH
+
     resolution = Intake::RecipientResolver.call(mail)
 
     if (existing = duplicate_of(resolution))
@@ -25,7 +30,8 @@ class IntakeMailbox < ApplicationMailbox
     message.domain.update!(probe_received_at: Time.current) if probe
 
     dispatch_forward_copy(message, probe: probe)
-  rescue StandardError => e
+  # SystemStackError is not a StandardError; left unrescued it strands the email in processing.
+  rescue StandardError, SystemStackError => e
     store_fallback(e)
   end
 
@@ -101,6 +107,19 @@ class IntakeMailbox < ApplicationMailbox
     return "list" if message.list_mail
     return "spam" if message.spam?(message.domain.forward_copy_max_spam)
     nil
+  end
+
+  def store_too_deep
+    Message.create!(
+      inbound_email: inbound_email,
+      routed_via: "error",
+      received_at: Time.current,
+      parse_error: "MimeTooDeep",
+      routing_trace: [ { "header" => "mime_depth", "address" => "over #{MAX_MIME_DEPTH} levels, not parsed" } ],
+      forward_status: "skipped:mime_too_deep",
+      subject: (mail.subject rescue nil),
+      from_address: (Array(mail.from).first.to_s.downcase.presence rescue nil)
+    )
   end
 
   def store_fallback(error)
