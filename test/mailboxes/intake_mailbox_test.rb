@@ -139,7 +139,9 @@ class IntakeMailboxTest < ActiveSupport::TestCase
   test "a copy to a second owned domain with a distinct forward target is not dropped as a duplicate" do
     other = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
     first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    # The registrar's copy for example.com names example.com in its Received lines too.
     second_source = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+                                    .gsub("for <hello@example.org>", "for <hi@example.com>")
     second = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + second_source)
 
     assert_equal @domain, first.domain
@@ -155,6 +157,7 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     org_domain = @domain
     com_domain = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
     to_com = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+                             .gsub("for <hello@example.org>", "for <hi@example.com>")
 
     org = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
     com = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + to_com)
@@ -242,5 +245,158 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!("garbage\x00\xff")
     inbound.route
     assert Message.exists?(inbound_email_id: inbound.id)
+  end
+
+  test "a hosted catch-all mailbox resolves to the address the sender used" do
+    @domain.update!(catch_all_mailbox: "info@example.org", forward_mode: "listed", forward_addresses: [ "careers" ])
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + hosted_source)
+    assert_equal @domain, message.domain
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert_equal %w[info@example.org careers@example.org], message.matched_addresses
+    assert message.routing_trace.include?({ "header" => "catch_all_mailbox", "address" => "info@example.org" })
+    assert_equal "queued", message.forward_status, "listed forwarding sees the recovered address"
+    assert_enqueued_with(job: ForwardCopyJob, args: [ message.id ])
+  end
+
+  test "without a catch-all mailbox, hosted mail still lands as the mailbox" do
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + hosted_source)
+    assert_equal @domain, message.domain
+    assert_equal "info@example.org", message.to_address
+    assert_equal "hdr:Delivered-To", message.routed_via
+  end
+
+  test "bcc and multi-recipient mail through a hosted mailbox stays on its domain" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    Domain.create!(name: "example.net")
+    bcc = hosted_source.sub("To: Careers Team <careers@example.org>", "To: someone@example.net").sub("hosted-0001", "hosted-bcc")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + bcc)
+    assert_equal @domain, message.domain
+    assert_equal "careers@example.org", message.to_address
+
+    several = hosted_source.sub("\tfor <careers@example.org>; ", "\t").sub("hosted-0001", "hosted-several")
+                           .sub("To: Careers Team <careers@example.org>", "To: someone@example.net, press@example.org, careers@example.org")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + several)
+    assert_equal @domain, message.domain
+    assert_equal "press@example.org", message.to_address
+    assert_equal "catch-all:To", message.routed_via
+  end
+
+  test "a probe sent through a hosted mailbox is recognised, not flagged as a loop" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    source = "X-Mailroom-Instance: #{Mailroom.instance_id}\nX-Original-To: abc123hash@inbound.postmarkapp.com\n" +
+      hosted_source.gsub("careers@example.org", @domain.probe_address)
+    message = receive_source(source)
+    assert_equal @domain.probe_address, message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert @domain.reload.probe_received_at.present?
+    assert_equal "skipped:probe", message.forward_status
+  end
+
+  test "trace headers forged below the host's MX hop do not misfile hosted mail" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    forged = "X-Original-To: ceo@example.org\nDelivered-To: ceo@example.org\n" \
+             "Received: from forged.sender.example.net by mx1.mailhost.example.net with ESMTP id FORGED\n" \
+             "\tfor <ceo@example.org>; Fri, 13 Nov 2026 08:59:59 +0000 (UTC)\n"
+    source = hosted_source.sub("X-Spam-Status:", forged + "X-Spam-Status:")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+  end
+
+  test "with the mail host's MX server set, mail sent to the mailbox stays with it despite planted headers" do
+    @domain.update!(catch_all_mailbox: "info@example.org", catch_all_mx_host: "mx1.mailhost.example.net")
+    source = hosted_source.sub("for <careers@example.org>", "for <info@example.org>")
+                          .sub("To: Careers Team <careers@example.org>", "To: info@example.org")
+                          .sub("X-Spam-Status:", "X-Original-To: ceo@example.org\nX-Spam-Status:")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal "info@example.org", message.to_address
+    assert_equal "hdr:Delivered-To", message.routed_via
+  end
+
+  test "a forged Delivered-To does not move registrar mail to another owned domain" do
+    Domain.create!(name: "example.net", forward_copy_to: "client@example.net")
+    source = forwarded_source.sub("From: Alice Example", "Delivered-To: boss@example.net\nFrom: Alice Example")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal @domain, message.domain
+    assert_equal "hello@example.org", message.to_address
+  end
+
+  def nested_source(depth)
+    body = +""
+    depth.times { |i| body << "Content-Type: multipart/mixed; boundary=\"b#{i}\"\n\n--b#{i}\n" }
+    body << "Content-Type: text/html\n\n<p>leaf</p>\n"
+    (depth - 1).downto(0) { |i| body << "--b#{i}--\n" }
+    "X-Original-To: hello@example.org\nFrom: Mallory <m@sender.example.net>\nTo: hello@example.org\n" \
+      "Subject: nest #{depth}\nMessage-ID: <nest-#{depth}@sender.example.net>\nMIME-Version: 1.0\n" + body
+  end
+
+  test "over-deep MIME is stored unparsed as an error and not forwarded" do
+    [ 33, 3000 ].each do |depth|
+      inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(nested_source(depth))
+      assert_no_enqueued_jobs(only: ForwardCopyJob) do
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        inbound.route
+        assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2, "depth #{depth} is not parsed"
+      end
+      assert inbound.reload.delivered?, "depth #{depth} leaves nothing in processing"
+      message = Message.find_by!(inbound_email_id: inbound.id)
+      assert_equal "error", message.routed_via
+      assert_equal "MimeTooDeep", message.parse_error
+      assert_equal "skipped:mime_too_deep", message.forward_status
+      assert_equal "nest #{depth}", message.subject
+      assert_equal "m@sender.example.net", message.from_address
+      assert_includes message.routing_trace, { "header" => "mime_depth", "address" => "over 32 levels, not parsed" }
+      assert_equal nested_source(depth), message.raw_source, "the raw message is kept"
+    end
+  end
+
+  test "ordinary nesting is still parsed" do
+    message = receive_source(nested_source(4))
+    assert_equal "hdr:X-Original-To", message.routed_via
+    assert message.has_html
+  end
+
+  test "a stack overflow while parsing still leaves a row and nothing in processing" do
+    inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(forwarded_source)
+    Intake::MessageBuilder.stub(:new, ->(*) { raise SystemStackError, "stack level too deep" }) { inbound.route }
+    assert inbound.reload.delivered?
+    message = Message.find_by!(inbound_email_id: inbound.id)
+    assert_equal "error", message.routed_via
+    assert_equal "SystemStackError", message.parse_error
+  end
+
+  test "a sender who copies a Message-ID and arrives first does not swallow the real message" do
+    forged = forwarded_source.sub("From: Alice Example <alice@sender.example.net>", "From: Mallory <m@sender.example.net>")
+                             .sub(/This message was sent.*\z/m, "Please wire the money to a new account.\n")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forged)
+    real = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+
+    assert real, "the real message gets its own row"
+    assert_equal 2, Message.count
+    assert_equal "alice@sender.example.net", real.from_address
+    assert_match(/forwarded by the registrar/, real.body_text)
+    assert_equal "queued", real.forward_status, "different mail gets its own copy"
+    assert_enqueued_with(job: ForwardCopyJob, args: [ real.id ])
+    assert_includes real.routing_trace, { "header" => "same_message_id", "address" => "message:#{first.id}" }
+    assert_equal "queued", first.reload.forward_status
+    assert_not first.routing_trace.any? { |t| t["header"] == "duplicate" }
+  end
+
+  test "the same body with different line endings is still a duplicate" do
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    again = receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\r\n" + forwarded_source.gsub("\n", "\r\n"))
+    assert_nil again
+    assert_equal 1, Message.count
+    assert first.reload.routing_trace.any? { |t| t["header"] == "duplicate" }
+    assert_equal 64, first.raw_body_digest.size
+  end
+
+  test "merged matches stay capped" do
+    many = (1..60).map { |i| "u#{i}@example.org" }.join(", ")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{many}"))
+    others = (61..120).map { |i| "u#{i}@example.org" }.join(", ")
+    receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{others}"))
+    assert_equal Intake::RecipientResolver::MAX_MATCHES, first.reload.matched_addresses.size
   end
 end

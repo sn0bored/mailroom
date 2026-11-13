@@ -42,6 +42,34 @@ registrar catch-all          Postmark inbound           Mailroom (Rails, SQLite)
 Prefer MX records? Point `MX 10 inbound.postmarkapp.com` at a subdomain and set it as the Postmark
 server's inbound domain. Mailroom routes it the same way.
 
+## Domains that keep a hosted mailbox
+
+If a domain already has real email (Namecheap Private Email, Fastmail, Google Workspace and so on),
+forward from a mailbox there instead of the registrar:
+
+1. At the mail host, make one mailbox, say `info@example.org`, the domain's catch-all.
+2. In that mailbox, add an auto-forward rule that sends everything to the inbound address the Domains
+   page shows, keeping a copy. Gmail first mails a confirmation code to that address; it shows up in
+   Mailroom as unrouted.
+3. In Mailroom, enter `info@example.org` as the domain's hosted catch-all mailbox.
+4. Optional but safer: open a forwarded message's original and find the lowest `Received` line your
+   mail host wrote, the one that took the message from the sender. Enter the server named after
+   `by` there (for example `mx1.example.net`) as the mail host's MX server. Use the name that line
+   alone carries; a name the host's other hops share will match the wrong line.
+
+The host stamps its mailbox on everything it forwards, so without step 3 every message shows as
+`info@`. With it, Mailroom looks past the mailbox, on the same domain only. It reads the trace from
+the top down, so the hops nearest Mailroom count first: `Received: ... for <address>` lines and
+headers that record the original recipient (such as `X-Original-To`, `X-Gm-Original-To`,
+`X-Delivered-To` or `Envelope-To`). Then it falls back to `To` and `Cc`. These messages show
+`routed_via: catch-all:<header>`.
+
+Without step 4 Mailroom can't tell where the host's lines end and the sender's begin. A sender can
+then relabel mail sent to `info@` itself, or mail sent to several addresses at once, as another
+address on the same domain. It can never move mail to another domain. With step 4 the recipient on
+the MX line is final, even when it is `info@`, and nothing below that line is read. When the line
+names no single recipient, `To` and `Cc` decide.
+
 ## Setup
 
 Requirements: Ruby 3.3, SQLite 3, a Postmark account with inbound processing (the server token is

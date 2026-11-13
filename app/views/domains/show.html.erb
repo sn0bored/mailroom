@@ -6,7 +6,11 @@
 </dl>
 <section class="setup-panel panel" aria-labelledby="setup-heading">
   <div class="section-heading"><div><p class="eyebrow">Receiving setup</p><h2 id="setup-heading">One forwarder. Every address.</h2></div></div>
-  <% if @domain.catch_all_instruction %>
+  <% if @domain.catch_all_mailbox && Mailroom.inbound_address.present? %>
+    <p class="setup-line">Auto-forward everything in <code><%= @domain.catch_all_mailbox %></code>, keeping a copy, to:</p>
+    <%= render "shared/copy", id: "domain-forwarder", value: Mailroom.inbound_address, label: "Copy address" %>
+    <p class="help">Set this mailbox as the domain's catch-all at your mail host first.</p>
+  <% elsif @domain.catch_all_instruction %>
     <p class="setup-line">Add a catch-all forwarder at your registrar:</p>
     <%= render "shared/copy", id: "domain-forwarder", value: @domain.catch_all_instruction, label: "Copy forwarder" %>
     <p class="help">Keep the address and arrow exactly as shown when setting up your forwarder.</p>

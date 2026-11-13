@@ -556,4 +556,34 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
   ensure
     original.nil? ? ENV.delete("MAILROOM_FORWARD_SENDER") : ENV["MAILROOM_FORWARD_SENDER"] = original
   end
+
+  test "a hosted catch-all mailbox round trips and changes the setup instruction" do
+    Mailroom.stub(:inbound_address, "inbound@example.net") do
+      get domain_path(@domain)
+      assert_select "input[type=email][name='domain[catch_all_mailbox]'][aria-describedby=catch-all-mailbox-help]"
+      assert_select "#catch-all-mailbox-help", text: /auto-forwards its mail here/
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: " Info@Example.org " } }
+      assert_redirected_to domain_path(@domain)
+      assert_equal "info@example.org", @domain.reload.catch_all_mailbox
+      follow_redirect!
+      assert_select "input[name='domain[catch_all_mailbox]'][value='info@example.org']"
+      assert_select ".setup-line code", text: "info@example.org"
+      assert_select "#domain-forwarder", text: "inbound@example.net"
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "info@example.net" } }
+      assert_response :unprocessable_entity
+      assert_equal "info@example.org", @domain.reload.catch_all_mailbox
+
+      patch domain_path(@domain), params: { domain: { catch_all_mx_host: "MX1.Example.NET" } }
+      assert_equal "mx1.example.net", @domain.reload.catch_all_mx_host
+      follow_redirect!
+      assert_select "input[name='domain[catch_all_mx_host]'][value='mx1.example.net'][aria-describedby=catch-all-mx-host-help]"
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "", catch_all_mx_host: "" } }
+      assert_nil @domain.reload.catch_all_mailbox
+      follow_redirect!
+      assert_select "#domain-forwarder", text: "*@example.org -> inbound@example.net"
+    end
+  end
 end

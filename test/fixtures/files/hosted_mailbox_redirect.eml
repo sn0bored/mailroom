@@ -1,0 +1,35 @@
+Return-Path: <SRS0=Kq2x=FT=sender.example.net=alice@mailhost.example.net>
+Received: from mta-out.mailhost.example.net (mta-out.mailhost.example.net [192.0.2.20])
+        by inbound.postmarkapp.com with ESMTPS id hosted0001
+        for <abc123hash@inbound.postmarkapp.com>;
+        Fri, 13 Nov 2026 09:00:05 +0000 (UTC)
+Received: from store1.mailhost.example.net (localhost [127.0.0.1])
+	by mta-out.mailhost.example.net (Postfix) with ESMTP id 4hQ2Lm3Kx8z2abc
+	for <abc123hash@inbound.postmarkapp.com>; Fri, 13 Nov 2026 09:00:04 +0000 (UTC)
+X-Sieve-Redirected-From: info@example.org
+Delivered-To: info@example.org
+Received: from mx1.mailhost.example.net ([192.0.2.10])
+	by store1.mailhost.example.net with LMTP
+	id kQ8zB2xyZ2V4AAAA0J78UA
+	(envelope-from <alice@sender.example.net>)
+	for <info@example.org>; Fri, 13 Nov 2026 09:00:04 +0000
+Received: from mail.sender.example.net (mail.sender.example.net [203.0.113.10])
+	by mx1.mailhost.example.net (Postfix) with ESMTPS id 4hQ2Lk0Z9Lz1xyz
+	for <careers@example.org>; Fri, 13 Nov 2026 09:00:03 +0000 (UTC)
+X-Spam-Status: No, score=0.2
+X-Spam-Score: 0.2
+DKIM-Signature: v=1; a=rsa-sha256; d=sender.example.net; s=mail; c=relaxed/relaxed;
+	h=from:to:cc:subject:date:message-id; bh=REDACTED=; b=REDACTED=
+From: Alice Example <alice@sender.example.net>
+Date: Fri, 13 Nov 2026 09:00:00 +0000
+Subject: Application for the platform role
+Message-ID: <hosted-0001@sender.example.net>
+To: Careers Team <careers@example.org>
+Cc: Hiring Partner <partner@example.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+This message was sent to careers@example.org. The domain's hosted mail service
+delivered it to its catch-all mailbox, info@example.org, and a Sieve redirect
+forwarded it to the Postmark inbound address. Delivered-To now says info@, but
+the first Received hop still says who the sender addressed.

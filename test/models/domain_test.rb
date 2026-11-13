@@ -29,4 +29,64 @@ class DomainTest < ActiveSupport::TestCase
     domain.forward_mode = "invalid"
     assert_not domain.valid?
   end
+
+  test "a catch-all mailbox is normalised and must be on the domain itself" do
+    domain = Domain.create!(name: "example.org", catch_all_mailbox: "  Info@Example.ORG ")
+    assert_equal "info@example.org", domain.catch_all_mailbox
+    domain.update!(catch_all_mailbox: " ")
+    assert_nil domain.catch_all_mailbox
+
+    [ "info@example.net", "info@mail.example.org", "example.org", "@example.org", "in fo@example.org", "a@b@example.org" ].each do |address|
+      domain.catch_all_mailbox = address
+      assert_not domain.valid?, address
+      assert_includes domain.errors[:catch_all_mailbox], "must be an address on this domain, such as info@example.org"
+    end
+  end
+
+  test "a catch-all mailbox can't also be where copies are forwarded" do
+    domain = Domain.new(name: "example.org", forward_copy_to: "Info@example.org", catch_all_mailbox: "info@example.org")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mailbox], "can't also be where copies are forwarded"
+  end
+
+  test "a catch-all mailbox can't also be the default forward target it would inherit" do
+    previous = ENV["MAILROOM_DEFAULT_FORWARD_TO"]
+    domain = Domain.new(name: "example.org", catch_all_mailbox: "info@example.org")
+    Setting.set("default_forward_to", "INFO@example.org")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mailbox], "can't also be where copies are forwarded"
+
+    domain.forward_copy_to = "owner@example.net"
+    assert domain.valid?, "its own target overrides the default"
+
+    Setting.set("default_forward_to", "")
+    domain.forward_copy_to = nil
+    ENV["MAILROOM_DEFAULT_FORWARD_TO"] = "info@example.org"
+    assert_not domain.valid?
+  ensure
+    ENV["MAILROOM_DEFAULT_FORWARD_TO"] = previous
+  end
+
+  test "only active domains contribute catch-all mailboxes" do
+    Domain.create!(name: "example.org", catch_all_mailbox: "info@example.org", catch_all_mx_host: "MX1.Mailhost.Example.NET.")
+    Domain.create!(name: "example.net", catch_all_mailbox: "hello@example.net", active: false)
+    Domain.create!(name: "example.com")
+    Domain.create!(name: "example.edu", catch_all_mailbox: "info@example.edu")
+    assert_equal({ "info@example.org" => "mx1.mailhost.example.net", "info@example.edu" => nil }, Domain.catch_all_mailboxes)
+  end
+
+  test "an MX host must be a hostname and needs a catch-all mailbox" do
+    domain = Domain.new(name: "example.org", catch_all_mx_host: "mx1.example.net")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mx_host], "needs a hosted catch-all mailbox"
+    domain.catch_all_mailbox = "info@example.org"
+    assert domain.valid?
+    [ "mx1 example.net", "http://mx1.example.net", "localhost" ].each do |host|
+      domain.catch_all_mx_host = host
+      assert_not domain.valid?, host
+    end
+    domain.catch_all_mx_host = " "
+    assert domain.valid?
+    assert_nil domain.catch_all_mx_host
+  end
 end
