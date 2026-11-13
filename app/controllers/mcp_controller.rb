@@ -17,7 +17,8 @@ class McpController < ActionController::API
         return render(json: rpc_error(nil, -32600, "invalid request: batch larger than #{MAX_BATCH}"), status: :bad_request)
       end
       responses = payload.filter_map { |req| respond_to_request(req) }
-      render json: responses
+      # Only notifications: JSON-RPC sends nothing back, and MCP answers 202 with no body.
+      responses.empty? ? head(:accepted) : render(json: responses)
     else
       response_body = respond_to_request(payload)
       response_body ? render(json: response_body) : head(:accepted)

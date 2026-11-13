@@ -123,6 +123,13 @@ class McpControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "a batch of only notifications is 202 with no body" do
+    post "/mcp", params: [ { jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", method: "notifications/cancelled" } ].to_json,
+                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}" }
+    assert_response :accepted
+    assert_empty response.body
+  end
+
   test "notifications get no body" do
     post "/mcp", params: { jsonrpc: "2.0", method: "notifications/initialized" }.to_json,
                  headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}" }
