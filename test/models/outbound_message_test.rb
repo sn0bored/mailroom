@@ -1,5 +1,5 @@
 require "test_helper"
-require Rails.root.join("db/migrate/20261113000000_remove_refused_api_send_drafts")
+require Rails.root.join("db/migrate/20261113000000_fail_refused_api_send_drafts")
 
 class OutboundMessageTest < ActiveSupport::TestCase
   def build(**attributes)
@@ -40,14 +40,18 @@ class OutboundMessageTest < ActiveSupport::TestCase
     assert build(kind: "reply", api_key: key, status: "draft").valid?, "agent reply draft"
   end
 
-  test "the cleanup migration removes only refused API send drafts" do
+  test "the cleanup migration fails refused API send drafts and leaves other drafts alone" do
     key, = create_api_key(scopes: %w[mail:send mail:draft])
     refused = build(kind: "api", api_key: key, status: "draft").tap { |record| record.save!(validate: false) }
-    kept = [ build(kind: "api", api_key: key, status: "queued"), build(kind: "api", status: "draft"),
+    untouched = [ build(kind: "api", api_key: key, status: "queued"), build(kind: "api", status: "draft"),
       build(kind: "reply", api_key: key, status: "draft") ].each(&:save!)
+    before = untouched.map { |record| record.reload.attributes }
 
-    ActiveRecord::Migration.suppress_messages { RemoveRefusedApiSendDrafts.new.migrate(:up) }
-    assert_not OutboundMessage.exists?(refused.id)
-    assert_equal kept.map(&:id).sort, OutboundMessage.ids.sort
+    ActiveRecord::Migration.suppress_messages { FailRefusedApiSendDrafts.new.migrate(:up) }
+    refused.reload
+    assert_equal "failed", refused.status
+    assert_equal "refused before upgrade; not sent", refused.error
+    assert_equal before, untouched.map { |record| record.reload.attributes }
+    assert_empty OutboundMessage.drafts.select(&:api_send?)
   end
 end

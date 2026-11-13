@@ -105,6 +105,15 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ response.parsed_body["id"] ], OutboundMessage.where(idempotency_key: "retry-one").ids
   end
 
+  test "replaying the key of a message failed by the upgrade cleanup reports it as failed" do
+    record = OutboundMessage.create!(kind: "api", api_key: @key, status: "failed", idempotency_key: "legacy-one",
+      error: "refused before upgrade; not sent", from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
+    assert_no_enqueued_jobs { send_request(@payload.merge(idempotency_key: "legacy-one")) }
+    assert_response :ok
+    assert_equal({ "id" => record.id, "status" => "failed", "error" => "refused before upgrade; not sent", "idempotent" => true },
+      response.parsed_body.slice("id", "status", "error", "idempotent"))
+  end
+
   test "a display-name sender passes the domain check and keeps the name in the From header" do
     perform_enqueued_jobs(only: OutboundDeliveryJob) do
       send_request(@payload.merge(from: "Example Sender <sender@example.org>"))
