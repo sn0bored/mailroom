@@ -15,9 +15,11 @@ message is hostile until a human says otherwise.
   revocable. Tools outside a key's scopes are invisible in `tools/list` and rejected in `tools/call`.
 - **Ingress authentication.** The Postmark webhook requires HTTP basic auth
   (`actionmailbox:$RAILS_INBOUND_EMAIL_PASSWORD`); the app refuses to boot in production without it.
-- **Public-side gate.** A middleware allows only the Action Mailbox ingress paths and `/up` for requests
-  that did not arrive through the private side (Tailscale identity headers, the tailnet port, a local
-  host, or a forwarded tailnet client address). Every other route needs a session or a key as well.
+- **Public-side gate.** Mailroom runs two loopback listeners: an internal one for the inbox, MCP and API,
+  and a public one for the webhook. A middleware decides by the listener that accepted the connection,
+  never by Host, `X-Forwarded-*`, `Forwarded` or Tailscale headers. On the public listener only
+  `GET /up` and `POST` to the Postmark webhook path get through; everything else is a 404. Production
+  refuses to start without a separate public port. Every other route needs a session or a key as well.
 - **Nothing rendered from mail.** The web inbox shows text bodies only, escaped. Attachments download
   through an authenticated controller with `Content-Disposition: attachment`; blob URLs are never exposed.
 - **Logs.** Raw payloads, tokens, passwords and mail bodies are filtered from the Rails log. The webhook

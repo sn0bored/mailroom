@@ -59,6 +59,7 @@ RAILS_INBOUND_EMAIL_PASSWORD=$(openssl rand -hex 24)
 MAILROOM_INSTANCE_ID=$(openssl rand -hex 8)
 MAILROOM_DATA_DIR=$HOME/.mailroom
 MAILROOM_PORT=3100
+MAILROOM_PUBLIC_PORT=3101
 MAILROOM_PUBLIC_HOST=<the public hostname from the owner>
 MAILROOM_SERVE_HOST=<the same hostname when using Tailscale Serve>
 POSTMARK_SERVER_TOKEN=<the token from the owner>
@@ -94,13 +95,18 @@ removable volume.
 
 ### 6. Expose it
 
+Mailroom listens twice on `127.0.0.1`: port 3100 (`MAILROOM_PORT`) is the internal listener for the
+inbox, MCP and API; port 3101 (`MAILROOM_PUBLIC_PORT`) is the public listener, which serves only the
+webhook and `/up`. Anything public must point at 3101, never at 3100.
+
 **Tailscale:** `tailscale serve --bg --https=8443 http://127.0.0.1:3100` makes the inbox, MCP and API
 reachable on the tailnet only. `tailscale funnel --bg --https=443 --set-path=/rails/action_mailbox
-http://127.0.0.1:3100/rails/action_mailbox` makes only the webhook path public. The first run of each
+http://127.0.0.1:3101/rails/action_mailbox` makes the webhook public. The first run of each
 may print a consent link; the owner clicks it.
 
-**Reverse proxy:** proxy `https://<host>/` to `127.0.0.1:3100` and make sure `/rails/action_mailbox/`
-is reachable from the internet. Mailroom's own gate limits public traffic to that path and `/up`.
+**Reverse proxy:** proxy `https://<host>/` to `127.0.0.1:3101` only. The owner reaches 3100 privately,
+over Tailscale Serve or an SSH tunnel (the tunnel works for MCP and the API; the web inbox needs HTTPS).
+Check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/session/new` prints 404.
 
 ### 7. Point Postmark at it
 

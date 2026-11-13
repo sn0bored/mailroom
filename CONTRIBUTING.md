@@ -19,6 +19,7 @@ bundle install
 cp .env.example .env            # reference only — not auto-loaded in dev/test; the suite needs nothing from it
 bin/rails db:prepare
 bin/rails test                  # the suite runs without a Postmark account
+bin/dev                         # http://localhost:3100, the internal listener (MAILROOM_PORT)
 ```
 
 The test suite is self-contained: it does not call Postmark, send real mail, or need a public URL.
