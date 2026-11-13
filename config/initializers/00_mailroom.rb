@@ -18,6 +18,12 @@ module Mailroom
   def self.default_forward_to = ENV["MAILROOM_DEFAULT_FORWARD_TO"].presence
   def self.trust_local? = ENV["MAILROOM_TRUST_LOCAL"] == "1"
 
+  # authserv-ids whose Authentication-Results header Mailroom believes. Postmark writes none, so this is
+  # empty unless a mailbox host in front of Postmark stamps one (and strips forged copies of its own).
+  def self.trusted_authserv_ids
+    ENV.fetch("MAILROOM_TRUSTED_AUTHSERV_IDS", "").split(",").map { |id| id.strip.downcase }.reject(&:empty?)
+  end
+
   # True when outbound mail can actually leave: a Postmark token in production, or the test delivery method.
   def self.sending_configured?
     ENV["POSTMARK_SERVER_TOKEN"].present? || ActionMailer::Base.delivery_method == :test
