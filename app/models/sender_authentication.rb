@@ -1,20 +1,5 @@
-# What the receiving side learned about who sent a message, read from its stored raw source.
-#
-# 1. A trusted Authentication-Results decides when there is one. Mail forwarded by a registrar
-#    reaches Postmark from the forwarder, which checked the real sender first and recorded the
-#    verdict there. It counts only when its authserv-id is listed in MAILROOM_TRUSTED_AUTHSERV_IDS,
-#    and only the topmost such header counts; copies a sender planted sit below it.
-# 2. Otherwise the verdict comes from Postmark's own signals: the topmost Received-SPF and the
-#    SpamAssassin rules in X-Spam-Tests (Postmark writes no Authentication-Results and no DMARC).
-#    - pass: DKIM_VALID_AU (a valid signature from the From domain), or an SPF pass for an envelope
-#      domain aligned with the From domain.
-#    - fail: no aligned DKIM, and an SPF fail or softfail for an envelope domain aligned with the
-#      From domain, so the domain's own SPF rejected the host that sent this.
-#    - none: anything else. That includes forwarded mail, where Postmark's SPF result describes
-#      the forwarder's envelope and says nothing about the sender.
-#    SPF is reported only when the envelope domain aligns, and the DMARC policy is never looked up.
-# A sender can write any of these headers too. Postmark adds its own above the ones that arrive
-# with the message, so only the topmost copy of each counts.
+# Sender checks use only ingress-owned Postmark signals or a configured forwarder's results inside
+# the trusted Received boundary. Legacy raw provider headers and sender-supplied results are ignored.
 class SenderAuthentication
   SPF_RESULTS = %w[pass fail softfail neutral none temperror permerror].freeze
 
@@ -25,7 +10,9 @@ class SenderAuthentication
   def self.parse(raw, from_address:)
     fields = header_fields(raw)
     from_domain = from_address.to_s.split("@").last.to_s.downcase
-    from_authentication_results(fields) || from_provider_signals(fields, from_domain) || unknown
+    provider = from_provider_signals(fields, from_domain)
+    return unknown unless provider
+    from_authentication_results(fields, from_domain) || provider
   end
 
   def initialize(dmarc:, spf:, dkim:, source:)
@@ -35,10 +22,10 @@ class SenderAuthentication
   def known? = source.present?
   def failed? = dmarc == "fail"
 
-  def summary
+  def summary(domain: nil)
     return "Unavailable" unless known?
     verdict = { "pass" => "verified", "fail" => "unverified" }.fetch(dmarc, "unknown")
-    "#{verdict} (DMARC #{dmarc}, SPF #{spf}, DKIM #{dkim})"
+    "#{verdict}#{" for #{domain}" if domain.present?} (DMARC #{dmarc}, SPF #{spf}, DKIM #{dkim})"
   end
 
   class << self
@@ -56,14 +43,48 @@ class SenderAuthentication
       end
     end
 
-    def from_authentication_results(fields)
+    def from_authentication_results(fields, from_domain)
       trusted = Mailroom.trusted_authserv_ids
-      return nil if trusted.empty?
-      _, value = fields.find { |name, v| name == "authentication-results" && trusted.include?(authserv_id(v)) }
-      return nil unless value
-      results = value.split(";").drop(1).filter_map do |item|
-        match = item.strip.match(/\A(dmarc|spf|dkim)\s*=\s*([a-z]+)/i)
-        [ match[1].downcase, match[2].downcase ] if match
+      hosts = Mailroom.trusted_forwarder_hosts
+      return nil if trusted.empty? || hosts.empty?
+
+      # Anchor trust at the first Received, never at a sender's planted Postmark hop further down.
+      hop = fields.find { |name, _| name == "received" }&.last
+      from, by = received_hosts(hop)
+      return nil unless host_matches?(by, [ "postmarkapp.com" ]) && host_matches?(from, hosts)
+
+      fields.each do |name, value|
+        if name == "received"
+          _, receiver = received_hosts(value)
+          break unless host_matches?(receiver, [ "postmarkapp.com", *hosts ])
+        elsif name == "authentication-results" && trusted.include?(authserv_id(value))
+          return authentication_results(value, from_domain)
+        end
+      end
+      nil
+    end
+
+    def authentication_results(value, from_domain)
+      results = (result_tokens(value) || []).drop(1).filter_map do |tokens|
+        method, equals, result, *properties = tokens
+        next unless equals == "=" && %w[dmarc spf dkim].include?(method.to_s.downcase)
+        next unless properties.length % 3 == 0
+        attributes = {}
+        valid = properties.each_slice(3).all? do |key, separator, property|
+          key = key.downcase
+          separator == "=" && !attributes.key?(key) && (attributes[key] = property)
+        end
+        next unless valid
+        method, result = method.downcase, result.to_s.downcase
+        if method == "dmarc"
+          result = "none" unless same_domain?(attributes["header.from"], from_domain)
+        elsif method == "dkim"
+          domains = []
+          domains << attributes["header.d"] if attributes.key?("header.d")
+          domains << attributes["header.i"].split("@").last if attributes.key?("header.i")
+          result = "none" if domains.empty? || !domains.all? { |domain| same_domain?(domain, from_domain) }
+        end
+        [ method, result ]
       end
       first = ->(method) { results.find { |m, _| m == method }&.last }
       dkim = results.any? { |m, r| m == "dkim" && r == "pass" } ? "pass" : first.("dkim")
@@ -71,9 +92,70 @@ class SenderAuthentication
           dkim: limit(dkim, %w[pass fail]), source: "authentication-results")
     end
 
+    def same_domain?(domain, from_domain)
+      from_domain.present? && domain.to_s.casecmp?(from_domain)
+    end
+
+    def host_matches?(host, suffixes)
+      return false unless host&.match?(/\A[a-z0-9.-]+\z/i)
+      suffixes.any? { |suffix| host.casecmp?(suffix) || host.downcase.end_with?(".#{suffix}") }
+    end
+
+    def received_hosts(value)
+      tokens = result_tokens(value.to_s)&.first || []
+      by = tokens.index { |token| token.casecmp?("by") }
+      return [] unless tokens.first&.casecmp?("from") && by && by > 1
+      [ tokens[1], tokens[by + 1] ]
+    end
+
+    # RFC 8601: semicolons and equals signs are delimiters only outside quoted strings and nested
+    # comments. Keep quoted local parts joined to their domain; honor quoted pairs in both contexts.
+    # Malformed quoting/comments fail closed rather than exposing their contents as method results.
+    def result_tokens(value, first_only: false)
+      segments = [ [] ]
+      token = +""
+      depth = 0
+      quoted = escaped = false
+      flush = -> { segments.last << token.dup unless token.empty?; token.clear }
+      value.each_char do |char|
+        if escaped
+          token << char if depth.zero?
+          escaped = false
+        elsif char == "\\" && (quoted || depth.positive?)
+          escaped = true
+        elsif depth.positive?
+          depth += 1 if char == "("
+          depth -= 1 if char == ")"
+        elsif char == '"'
+          quoted = !quoted
+        elsif quoted
+          token << char
+        elsif char == "("
+          flush.call
+          depth = 1
+        elsif char == ")"
+          return nil
+        elsif char == ";"
+          flush.call
+          return segments if first_only
+          segments << []
+        elsif char == "="
+          flush.call
+          segments.last << char
+        elsif char.match?(/\s/)
+          flush.call
+        else
+          token << char
+        end
+      end
+      return nil if quoted || escaped || depth.positive?
+      flush.call
+      segments
+    end
+
     def from_provider_signals(fields, from_domain)
-      received_spf = fields.find { |name, _| name == "received-spf" }&.last
-      spam_tests = fields.find { |name, _| name == "x-spam-tests" }&.last
+      received_spf = fields.find { |name, _| name == "x-mailroom-received-spf" }&.last
+      spam_tests = fields.find { |name, _| name == "x-mailroom-spam-tests" }&.last
       return nil if received_spf.nil? && spam_tests.nil?
 
       rules = spam_tests.to_s.upcase.split(/[\s,]+/)
@@ -91,7 +173,9 @@ class SenderAuthentication
     end
 
     def authserv_id(value)
-      value.split(";").first.to_s.strip.split(/\s+/).first.to_s.downcase
+      # Read the identifier separately so malformed later results cannot make us skip the topmost
+      # trusted header in favor of a lower copy. The first semicolon terminates the identifier.
+      result_tokens(value, first_only: true)&.first&.first.to_s.downcase
     end
 
     def spf_envelope_domain(received_spf)

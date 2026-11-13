@@ -85,7 +85,7 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     Mailroom.stub(:forward_sender, "forward@example.org") { ForwardCopyJob.perform_now(@record.id) }
     delivery = ActionMailer::Base.deliveries.last
     assert_equal "sent", @record.reload.forward_status
-    # Registrar-forwarded fixture: Postmark's signals cannot speak for the sender, so no tag.
+    # Legacy fixture without ingress-owned sender signals: unavailable, so no tag.
     assert_equal "[example.org] Original", delivery.subject
     assert_equal [ "sender@example.net" ], delivery.reply_to
     assert_equal [ "owner@example.net" ], delivery.to
@@ -95,9 +95,9 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     assert_equal @record.id.to_s, delivery["X-Mailroom-Message-Id"].value
     assert_equal "inbox@example.org", delivery["X-Mailroom-Original-To"].value
     assert_equal Mailroom.forward_stream, delivery.message_stream
-    assert_includes delivery.body.decoded, "Received for inbox@example.org on #{@record.received_at}"
-    assert_includes delivery.body.decoded, "From: Example Sender <sender@example.net>\n" \
-      "Sender check: unknown (DMARC none, SPF none, DKIM none)\n\nBody"
+    assert_includes delivery.body.decoded, "From: \"Example Sender\" <sender@example.net>\n" \
+      "To: inbox@example.org\nDate: #{@record.received_at}\n\nBody"
+    assert_not_includes delivery.body.decoded, "Sender check:"
   end
 
   test "attachments stop at budget and report remainder" do
@@ -121,7 +121,7 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     Mailroom.stub(:forward_sender, "forward@example.org") do
       @record.stub(:raw_source, raw) do
         html = ForwardMailer.copy(@record).message.html_part.decoded
-        assert html.end_with?("<p>original</p>")
+        assert html.end_with?('<div style="overflow:hidden;position:relative"><p>original</p></div>')
         assert_includes html, "Forwarded by Mailroom"
       end
       @record.stub(:raw_source, -> { raise ArgumentError }) { assert_nil ForwardMailer.copy(@record).message.html_part }
@@ -150,7 +150,7 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
       body "<p>single</p>"
     end.to_s
     Mailroom.stub(:forward_sender, "forward@example.org") do
-      @record.stub(:raw_source, raw) { assert ForwardMailer.copy(@record).message.html_part&.decoded.to_s.end_with?("<p>single</p>") }
+      @record.stub(:raw_source, raw) { assert ForwardMailer.copy(@record).message.html_part&.decoded.to_s.end_with?('<div style="overflow:hidden;position:relative"><p>single</p></div>') }
     end
   end
 

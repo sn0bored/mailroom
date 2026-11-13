@@ -44,6 +44,11 @@ module Mailroom
     ENV.fetch("MAILROOM_TRUSTED_AUTHSERV_IDS", "").split(",").map { |id| id.strip.downcase }.reject(&:empty?)
   end
 
+  # Hostnames (or dot-boundary suffixes) for the registrar's sending and relay hosts.
+  def self.trusted_forwarder_hosts
+    ENV.fetch("MAILROOM_TRUSTED_FORWARDER_HOSTS", "").split(",").map { |host| host.strip.downcase }.reject(&:empty?)
+  end
+
   # True when outbound mail can actually leave: a Postmark token in production, or the test delivery method.
   def self.sending_configured?
     ENV["POSTMARK_SERVER_TOKEN"].present? || ActionMailer::Base.delivery_method == :test

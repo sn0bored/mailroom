@@ -10,9 +10,8 @@ class ForwardMailer < ApplicationMailer
   # whose domain did not authenticate is tagged in the subject.
   def copy(record)
     auth = record.sender_authentication
-    text = "Received for #{record.to_address} on #{record.received_at}\nFrom: #{record.display_from}\n"
-    text += "Sender check: #{auth.summary}\n" if auth.known?
-    text += "\n#{record.body_text}"
+    text = provenance_rows(record, auth).map { |label, value| "#{label}: #{value}" }.join("\n")
+    text += "\n\n#{record.body_text}"
     total = 0
     items = record.attachments.to_a
     items.each_with_index do |attachment, index|
@@ -46,16 +45,28 @@ class ForwardMailer < ApplicationMailer
     html = original_html(record)
     return nil if html.blank?
     clean = Rails::HTML5::SafeListSanitizer.new.sanitize(html, scrubber: ForwardHtmlScrubber.new)
-    clean.present? ? provenance_banner(record, auth) + clean : nil
+    clean.present? ? provenance_banner(record, auth) + %(<div style="overflow:hidden;position:relative">#{clean}</div>) : nil
   rescue StandardError
     nil
   end
 
   def provenance_banner(record, auth)
-    rows = [ [ "From", record.display_from ], [ "To", record.to_address ], [ "Date", (record.sent_at || record.received_at).to_s ] ]
-    rows << [ "Sender check", auth.summary ] if auth.known?
+    rows = provenance_rows(record, auth)
     lines = rows.map { |label, value| "#{label}: #{ERB::Util.html_escape(value)}" }
     %(<div style="#{BANNER_STYLE}"><strong>Forwarded by Mailroom</strong><br>#{lines.join('<br>')}</div>)
+  end
+
+  def provenance_rows(record, auth)
+    rows = [
+      [ "From", Mcp::Frame.mailbox(record.from_name, record.from_address) ],
+      [ "To", record.to_address ],
+      [ "Date", (record.sent_at || record.received_at).to_s ]
+    ]
+    if auth.known?
+      domain = record.from_address.to_s.split("@").last.to_s.downcase
+      rows << [ "Sender check", auth.summary(domain: domain) ]
+    end
+    rows.map { |label, value| [ label, Mcp::Frame.single_line(value) ] }
   end
 
   def original_html(record)
