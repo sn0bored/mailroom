@@ -55,14 +55,25 @@ Most forwarders check the real sender before passing mail on and record the resu
 2. Find the topmost `Authentication-Results:` line. Its first token, before the first `;`, is the
    forwarder's authserv-id. In `Authentication-Results: mx1.forwarder.example.net; dkim=pass ...`,
    that is `mx1.forwarder.example.net`.
-3. Set `MAILROOM_TRUSTED_AUTHSERV_IDS=mx1.forwarder.example.net` (comma-separate several) and restart.
+3. Find the first `Received:` header. Its `by` host must be Postmark (`postmarkapp.com` or a
+   subdomain), and its `from` host must be your forwarder, for example `out.forwarder.example.net`.
+4. Set `MAILROOM_TRUSTED_AUTHSERV_IDS=mx1.forwarder.example.net` and
+   `MAILROOM_TRUSTED_FORWARDER_HOSTS=forwarder.example.net`, then restart. Both accept comma-separated
+   lists. Forwarder hosts match exactly or as a suffix on a dot boundary; include the forwarder's
+   sending and relay hosts, and choose the narrowest suffix that covers only that provider's hosts.
 
-From then on, the topmost `Authentication-Results` carrying a listed id decides DMARC, SPF and DKIM.
-Copies a sender writes into their own headers sit below it and are ignored. List an id only if all
-mail for your domains passes through that forwarder. Mail that reaches Postmark directly (MX mode)
-has no genuine header above a forged one.
+Mailroom trusts the topmost `Authentication-Results` with a listed id only when the first Received
+hop shows that forwarder delivering to Postmark. The result must also precede every Received header
+written by a host outside Postmark and the configured forwarder hosts. A trusted id alone does not
+establish trust for direct or MX delivery. DMARC's `header.from` must match the stored From domain,
+ignoring case; DKIM results likewise require a matching `header.d` or `header.i` domain.
 
-Without the setting, Mailroom falls back to what Postmark reports:
+Otherwise, Mailroom uses only `X-Mailroom-Spam-Tests` and `X-Mailroom-Received-SPF`, copied at ingress
+from the authenticated Postmark JSON `Headers` array. Missing signals are stamped `none`, and only
+the first copy of each owned header counts. Raw `X-Spam-Tests` and `Received-SPF` never decide the
+verdict. Previously stored messages without these owned signals remain unavailable and cannot be
+verified. For messages with Postmark signals:
+
 - **Verified:** a valid DKIM signature from the From domain, or an SPF pass for it.
 - **Unverified:** the From domain's own SPF rejected the sending host, and its DKIM did not pass.
 - **Unknown:** everything else, including forwarded mail whose only SPF result describes the

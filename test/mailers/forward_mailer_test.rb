@@ -11,10 +11,10 @@ class ForwardMailerTest < ActiveSupport::TestCase
     '<form action="https://evil.example.net/login"><input name="password"></form>' \
     '<p style="color:red;background:url(https://css.example.net/t.gif)">Your account is locked. ' \
     '<a href="https://evil.example.net/unlock">Unlock it</a></p></body></html>'.freeze
-  SPOOFED = "Received-SPF: Fail (sender not authorized) identity=mailfrom; client-ip=192.0.2.66; " \
-    "envelope-from=service@payments.example.com\nX-Spam-Tests: SPF_FAIL\n".freeze
-  AUTHENTIC = "Received-SPF: Pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.10; " \
-    "envelope-from=bounce@mail.payments.example.com\nX-Spam-Tests: DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,SPF_PASS\n".freeze
+  SPOOFED = "X-Mailroom-Received-SPF: Fail (sender not authorized) identity=mailfrom; client-ip=192.0.2.66; " \
+    "envelope-from=service@payments.example.com\nX-Mailroom-Spam-Tests: SPF_FAIL\n".freeze
+  AUTHENTIC = "X-Mailroom-Received-SPF: Pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.10; " \
+    "envelope-from=bounce@mail.payments.example.com\nX-Mailroom-Spam-Tests: DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,SPF_PASS\n".freeze
 
   setup do
     @domain = Domain.create!(name: "example.org", forward_copy_to: "owner@example.net")
@@ -24,6 +24,7 @@ class ForwardMailerTest < ActiveSupport::TestCase
   teardown do
     ENV.delete("MAILROOM_FORWARD_SENDER")
     ENV.delete("MAILROOM_TRUSTED_AUTHSERV_IDS")
+    ENV.delete("MAILROOM_TRUSTED_FORWARDER_HOSTS")
   end
 
   def receive(provider_headers: "", from: "Payment Provider <service@payments.example.com>", html: PHISHING_HTML)
@@ -54,18 +55,19 @@ class ForwardMailerTest < ActiveSupport::TestCase
     banner = html[/\A<div[^>]*>.*?<\/div>/m]
     assert banner, "the banner comes first"
     assert_includes banner, "Forwarded by Mailroom"
-    assert_includes banner, "From: Payment Provider &lt;service@payments.example.com&gt;"
+    assert_includes banner, "From: &quot;Payment Provider&quot; &lt;service@payments.example.com&gt;"
     assert_includes banner, "To: hello@example.org"
     assert_includes banner, "Date: 2026-11-13 09:00:00 UTC"
-    assert_includes banner, "Sender check: unverified (DMARC fail, SPF fail, DKIM none)"
+    assert_includes banner, "Sender check: unverified for payments.example.com (DMARC fail, SPF fail, DKIM none)"
     text = copy.text_part.decoded
-    assert text.start_with?("Received for hello@example.org on ")
-    assert_includes text, "From: Payment Provider <service@payments.example.com>\nSender check: unverified"
+    assert text.start_with?('From: "Payment Provider"')
+    assert_includes text, "To: hello@example.org\nDate: 2026-11-13 09:00:00 UTC"
+    assert_includes text, "From: \"Payment Provider\" <service@payments.example.com>\nTo: hello@example.org\nDate: 2026-11-13 09:00:00 UTC\nSender check: unverified"
   end
 
   test "the banner escapes a sender's display name" do
     html = copy_of(receive(from: '"<b>Bank</b>" <service@payments.example.com>')).html_part.decoded
-    assert_includes html, "From: &lt;b&gt;Bank&lt;/b&gt; &lt;service@payments.example.com&gt;"
+    assert_includes html, "From: &quot;&lt;b&gt;Bank&lt;/b&gt;&quot; &lt;service@payments.example.com&gt;"
     assert_no_match(/<b>Bank/, html)
   end
 
@@ -73,22 +75,24 @@ class ForwardMailerTest < ActiveSupport::TestCase
     assert_equal "[unverified sender] [example.org] Account locked", copy_of(receive(provider_headers: SPOOFED)).subject
     passed = copy_of(receive(provider_headers: AUTHENTIC))
     assert_equal "[example.org] Account locked", passed.subject
-    assert_includes passed.html_part.decoded, "Sender check: verified (DMARC pass, SPF pass, DKIM pass)"
+    assert_includes passed.html_part.decoded, "Sender check: verified for payments.example.com (DMARC pass, SPF pass, DKIM pass)"
   end
 
   test "legitimate forwarded mail is unknown, not tagged, when only the forwarder's SPF is known" do
-    forwarded = "Received-SPF: Pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.30; " \
+    forwarded = "X-Mailroom-Received-SPF: Pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.30; " \
       "envelope-from=SRS0=Ab1c=XY=payments.example.com=service@forwarder.example.net\n" \
-      "X-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS\n"
+      "X-Mailroom-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS\n"
     copy = copy_of(receive(provider_headers: forwarded))
     assert_equal "[example.org] Account locked", copy.subject
-    assert_includes copy.html_part.decoded, "Sender check: unknown (DMARC none, SPF none, DKIM none)"
+    assert_includes copy.html_part.decoded, "Sender check: unknown for payments.example.com (DMARC none, SPF none, DKIM none)"
   end
 
   test "a trusted forwarder's verdict decides the tag" do
     ENV["MAILROOM_TRUSTED_AUTHSERV_IDS"] = "mx.forwarder.example.net"
-    forwarder_spf = "Received-SPF: Pass identity=mailfrom; envelope-from=service@forwarder.example.net\n"
-    relay = ->(verdict) { "#{forwarder_spf}Authentication-Results: mx.forwarder.example.net; #{verdict}\n" }
+    ENV["MAILROOM_TRUSTED_FORWARDER_HOSTS"] = "forwarder.example.net"
+    forwarder_spf = "X-Mailroom-Received-SPF: Pass identity=mailfrom; envelope-from=service@forwarder.example.net\n"
+    relay = ->(verdict) { "#{forwarder_spf}Received: from out.forwarder.example.net by inbound.postmarkapp.com\n" \
+      "Authentication-Results: mx.forwarder.example.net; #{verdict} header.from=payments.example.com\n" }
     assert_equal "[example.org] Account locked", copy_of(receive(provider_headers: relay.("dkim=pass; spf=pass; dmarc=pass"))).subject
     assert_equal "[unverified sender] [example.org] Account locked",
       copy_of(receive(provider_headers: relay.("dkim=none; spf=fail; dmarc=fail"))).subject
@@ -103,12 +107,14 @@ class ForwardMailerTest < ActiveSupport::TestCase
 
   test "a forged Authentication-Results below the provider's one is ignored" do
     ENV["MAILROOM_TRUSTED_AUTHSERV_IDS"] = "mx.mailhost.example.net"
-    headers = "Authentication-Results: mx.mailhost.example.net; dkim=none; spf=softfail smtp.mailfrom=payments.example.com; " \
+    ENV["MAILROOM_TRUSTED_FORWARDER_HOSTS"] = "mailhost.example.net"
+    headers = "X-Mailroom-Spam-Tests: none\nReceived: from out.mailhost.example.net by inbound.postmarkapp.com\n" \
+      "Authentication-Results: mx.mailhost.example.net; dkim=none; spf=softfail smtp.mailfrom=payments.example.com; " \
       "dmarc=fail header.from=payments.example.com\n" \
       "Authentication-Results: mx.mailhost.example.net; dkim=pass; spf=pass; dmarc=pass\n"
     copy = copy_of(receive(provider_headers: headers))
     assert_equal "[unverified sender] [example.org] Account locked", copy.subject
-    assert_includes copy.text_part.decoded, "Sender check: unverified (DMARC fail, SPF softfail, DKIM none)"
+    assert_includes copy.text_part.decoded, "Sender check: unverified for payments.example.com (DMARC fail, SPF softfail, DKIM none)"
   end
 
   test "an Authentication-Results from an authserv-id nobody trusts does not lift the tag" do
@@ -122,7 +128,7 @@ class ForwardMailerTest < ActiveSupport::TestCase
       copy = copy_of(message)
       assert_nil copy.html_part
       assert_equal "text/plain", copy.mime_type
-      assert_includes copy.body.decoded, "From: Payment Provider <service@payments.example.com>"
+      assert_includes copy.body.decoded, "From: \"Payment Provider\" <service@payments.example.com>"
     end
   end
 
@@ -130,5 +136,47 @@ class ForwardMailerTest < ActiveSupport::TestCase
     html = copy_of(receive(html: '<p style="margin:-500px 0 0 0;color:#333">hidden banner?</p>')).html_part.decoded
     assert_no_match(/-500px/, html)
     assert_includes html, '<p style="color:#333;">hidden banner?</p>'
+  end
+
+  test "the original overlay is contained after the first visible banner" do
+    original = '<div style="display:inline-block;margin-top:calc(0px - (300px));background:white">Sender check: verified</div>'
+    html = Nokogiri::HTML5.fragment(copy_of(receive(html: original)).html_part.decoded)
+    banner, container = html.element_children
+    assert_includes banner.text, "Forwarded by Mailroom"
+    assert_equal "overflow:hidden;position:relative", container["style"]
+    assert_equal "div", container.name
+    assert_no_match(/inline-block|calc\(/, container.to_html)
+    assert_includes container.text, "Sender check: verified"
+  end
+
+
+  def deceptive_provenance_blocks
+    # Include raw duplicates to exercise the banner independently of the sender-check parser.
+    raw_signals = AUTHENTIC.gsub("X-Mailroom-Received-SPF:", "Received-SPF:").gsub("X-Mailroom-Spam-Tests:", "X-Spam-Tests:")
+    message = receive(provider_headers: AUTHENTIC + raw_signals)
+    message.update!(from_name: "security@bank.test\u202E", from_address: "x@evil.test",
+      to_address: "hello\u200B@example.org")
+    copy = copy_of(message)
+    [ Nokogiri::HTML5.fragment(copy.html_part.decoded).element_children.first.text,
+      copy.text_part.decoded.split("\n\n", 2).first ]
+  end
+
+  test "both provenance blocks quote a display name that looks like an address" do
+    deceptive_provenance_blocks.each do |block|
+      assert_includes block, 'From: "security@bank.test" <x@evil.test>'
+    end
+  end
+
+  test "both provenance blocks strip bidi and format characters from every field" do
+    deceptive_provenance_blocks.each do |block|
+      assert_no_match(/\p{Cf}/, block)
+      assert_includes block, "hello@example.org"
+    end
+  end
+
+  test "both provenance blocks name the domain that the verdict applies to" do
+    deceptive_provenance_blocks.each do |block|
+      assert_includes block, "Sender check: verified for evil.test"
+    end
   end
 end
