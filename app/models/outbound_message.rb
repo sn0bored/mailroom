@@ -42,6 +42,17 @@ class OutboundMessage < ApplicationRecord
 
   def from_domain = from_mailbox&.domain.to_s.downcase
 
+  # True when this reply goes to the source message's Reply-To and that is not the address the
+  # message came from: the sender chose where the answer goes, so the owner is told.
+  def reply_to_differs_from_sender?
+    return false unless source_message
+
+    reply_to = source_message.reply_to.to_s.strip
+    return false if reply_to.empty? || reply_to.casecmp?(source_message.from_address.to_s.strip)
+
+    Array(to_addresses).any? { |address| address.to_s.strip.casecmp?(reply_to) }
+  end
+
   private
 
   def from_address_is_one_mailbox

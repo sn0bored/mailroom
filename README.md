@@ -90,7 +90,7 @@ method the same way. Routing does not care who delivered the message.
 | `get_message` | mail:read | summary + text body, framed; does not mark read |
 | `get_attachment` | mail:read | text inline (framed), images inline up to 5 MB, else metadata |
 | `update_message` | mail:write | read / unread / archive / unarchive |
-| `draft_reply` | mail:draft | creates a draft; a human sends it from the inbox |
+| `draft_reply` | mail:draft | creates a draft; a human sends it from the inbox. `reply_all` copies only the sender and addresses on your domains, and lists anyone it left off |
 
 Tools outside a key's scopes are not listed and are rejected if called. Every content-bearing result
 starts with the untrusted-content warning, carries a fresh nonce on both markers, escapes any line that

@@ -60,8 +60,13 @@ class DraftsController < ApplicationController
   end
 
   def draft_params
-    attributes = params.require(:draft).permit(:from_address, :subject, :text_body, :to)
-    attributes[:to_addresses] = attributes.delete(:to).to_s.split(",").map(&:strip).reject(&:blank?)
+    attributes = params.require(:draft).permit(:from_address, :subject, :text_body, :to, :cc, :bcc)
+    attributes[:to_addresses] = address_list(attributes.delete(:to))
+    # Cc and Bcc change only when the form sends them, so a form without the fields keeps them.
+    attributes[:cc_addresses] = address_list(attributes.delete(:cc)) if attributes.key?(:cc)
+    attributes[:bcc_addresses] = address_list(attributes.delete(:bcc)) if attributes.key?(:bcc)
     attributes
   end
+
+  def address_list(value) = value.to_s.split(",").map(&:strip).reject(&:blank?)
 end
