@@ -1,8 +1,14 @@
 <%= link_to "Back to drafts", drafts_path, class: "back-link" %>
 <%= render "shared/page_header", title: @draft.subject.presence || "(No subject)", eyebrow: "Draft" %>
+<% if @draft.reply_to_differs_from_sender? %>
+  <div class="flash alert reply-to-note" role="note">Reply-To differs from sender: this reply goes to <strong><%= @draft.source_message.reply_to %></strong>, but the message came from <strong><%= @draft.source_message.from_address %></strong>.</div>
+<% end %>
 <dl><dt>Status</dt><dd><%= @draft.status %></dd><dt>From</dt><dd><%= @draft.from_address %></dd>
-<dt>To</dt><dd><%= @draft.to_addresses.join(", ") %></dd>
-<% if @draft.sent? %><dt>Sent</dt><dd><%= display_time(@draft.sent_at) %></dd><% end %></dl>
+<dt>To</dt><dd class="draft-to"><%= @draft.to_addresses.join(", ") %></dd>
+<dt>Cc</dt><dd class="draft-cc"><%= @draft.cc_addresses.join(", ").presence || "None" %></dd>
+<dt>Bcc</dt><dd class="draft-bcc"><%= @draft.bcc_addresses.join(", ").presence || "None" %></dd>
+<% if @draft.sent? %><dt>Sent</dt><dd><%= display_time(@draft.sent_at) %></dd><% end %>
+<% if @draft.error.present? %><dt>Error</dt><dd class="draft-error"><%= @draft.error %></dd><% end %></dl>
 <section class="message-body"><pre class="body"><%= @draft.text_body %></pre></section>
 <% if @draft.draft? %>
   <div class="actions section-heading"><%= button_to "Send", deliver_draft_path(@draft) %></div>

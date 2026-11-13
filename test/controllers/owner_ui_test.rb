@@ -418,7 +418,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to domain_path(@domain)
       assert_equal "Probe queued.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Probe.stub(:call, ->(*) { raise error, "Probe unavailable" }) do
         post probe_domain_path(@domain)
         assert_redirected_to domain_path(@domain)
@@ -478,13 +478,77 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to draft_path(draft)
       assert_equal "Message queued for sending.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Send.stub(:call, ->(*) { raise error, "Sending unavailable" }) do
         post deliver_draft_path(draft)
         assert_redirected_to draft_path(draft)
         assert_equal "Sending unavailable", flash[:alert]
       end
     end
+  end
+
+  test "drafts show every recipient and Cc and Bcc can be edited" do
+    draft = create_draft(cc_addresses: [ "copy@example.net" ], bcc_addresses: [ "blind@example.net" ])
+    get drafts_path
+    assert_select "td[data-label=Cc]", "copy@example.net"
+    assert_select "td[data-label=Bcc]", "blind@example.net"
+    get draft_path(draft)
+    assert_select ".draft-cc", "copy@example.net"
+    assert_select ".draft-bcc", "blind@example.net"
+    assert_select "input[name='draft[cc]'][value='copy@example.net']"
+    assert_select "input[name='draft[bcc]'][value='blind@example.net']"
+
+    patch draft_path(draft), params: { draft: draft_attributes.merge(cc: "one@example.net, two@example.net", bcc: "") }
+    assert_redirected_to draft_path(draft)
+    draft.reload
+    assert_equal %w[one@example.net two@example.net], draft.cc_addresses
+    assert_empty draft.bcc_addresses
+    get draft_path(draft)
+    assert_select ".draft-bcc", "None"
+
+    patch draft_path(draft), params: { draft: draft_attributes }
+    assert_equal %w[one@example.net two@example.net], draft.reload.cc_addresses
+  end
+
+  test "a reply to a Reply-To that differs from the sender carries a note" do
+    message = create_message(reply_to: "harvest@example.com")
+    draft = create_draft(source_message: message, to_addresses: [ "harvest@example.com" ])
+    get draft_path(draft)
+    assert_select ".reply-to-note", /Reply-To differs from sender: this reply goes to harvest@example.com, but the message came from sender@example.net/
+
+    [ create_draft(source_message: create_message(reply_to: nil), to_addresses: [ "sender@example.net" ]),
+      create_draft(source_message: create_message(reply_to: "sender@example.net"), to_addresses: [ "sender@example.net" ]),
+      create_draft(source_message: message, to_addresses: [ "sender@example.net" ]) ].each do |plain|
+      get draft_path(plain)
+      assert_select ".reply-to-note", count: 0
+    end
+  end
+
+  test "a draft whose delivery cannot be queued flashes the reason and shows it on the draft" do
+    @domain.update!(send_enabled: true)
+    draft = create_draft
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      post deliver_draft_path(draft)
+    end
+    assert_redirected_to draft_path(draft)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
+    assert_equal "draft", draft.reload.status
+    get draft_path(draft)
+    assert_select ".draft-error", "could not queue for delivery: SolidQueue::Job::EnqueueError"
+    assert_select "form[action=?]", deliver_draft_path(draft)
+  end
+
+  test "a probe that cannot be queued flashes the reason and leaves no row" do
+    @domain.update!(send_enabled: true)
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    Mailroom.stub(:forward_sender, "sender@example.org") do
+      OutboundDeliveryJob.stub(:perform_later, queue_down) do
+        assert_no_difference("OutboundMessage.count") { post probe_domain_path(@domain) }
+      end
+    end
+    assert_redirected_to domain_path(@domain)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
   end
 
   test "sent and queued drafts cannot be edited or resent" do

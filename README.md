@@ -118,7 +118,7 @@ method the same way. Routing does not care who delivered the message.
 | `get_message` | mail:read | summary + text body, framed; does not mark read |
 | `get_attachment` | mail:read | text inline (framed), images inline up to 5 MB, else metadata |
 | `update_message` | mail:write | read / unread / archive / unarchive |
-| `draft_reply` | mail:draft | creates a draft; a human sends it from the inbox |
+| `draft_reply` | mail:draft | creates a draft; a human sends it from the inbox. `reply_all` copies only the sender and addresses on your domains, and lists anyone it left off |
 
 Tools outside a key's scopes are not listed and are rejected if called. Every content-bearing result
 starts with the untrusted-content warning, carries a fresh nonce on both markers, escapes any line that
@@ -129,8 +129,43 @@ Claude Code: `claude mcp add --transport http mailroom https://<host>:8443/mcp -
 ## For apps
 
 `POST /api/v1/send` with a `mail:send` key: `{ "from", "to", "subject", "text", "html"?, "cc"?, "bcc"?,
-"reply_to"?, "in_reply_to"?, "idempotency_key"? }`. The from-domain must be marked send-enabled and
-allowed for that key. `GET /api/v1/health` needs no key.
+"reply_to"?, "in_reply_to"?, "idempotency_key"? }`. `from` is one address, optionally with a display
+name (`"Example App <hello@example.org>"`). Its domain must be marked send-enabled and allowed for that
+key. `to`, `cc` and `bcc` take a string or an array. `GET /api/v1/health` needs no key.
+
+Every send response is the same object, which never includes subjects, addresses or bodies:
+
+```json
+{ "id": 42, "status": "queued", "idempotency_key": "order-1001", "error": null,
+  "created_at": "2026-01-01T12:00:00Z", "sent_at": null, "provider_message_id": null }
+```
+
+| HTTP | meaning |
+|---|---|
+| `202` | accepted and queued for delivery |
+| `200` | `"idempotent": true`: this key already sent a message with that `idempotency_key`; it is returned and nothing is sent again |
+| `403` | refused by the sending rules (`reason` says which, e.g. the domain is not send-enabled); nothing is stored |
+| `422` | invalid request (`details` lists the problems, e.g. a `from` that is not one address); nothing is stored |
+
+Idempotency keys are scoped to the API key, and only an accepted message is stored under one. A refused
+or invalid request leaves nothing behind, so retrying it with the same key is evaluated again from
+scratch: once the owner enables sending for the domain, the same retry is queued. Retrying a key that
+was accepted never queues the message twice.
+
+`GET /api/v1/send/:id` with a `mail:send` key returns that object for one of the key's own messages.
+`status` goes from `queued` to `sending` (a delivery job has claimed it) and then to `sent` (with
+`sent_at` and the provider's message id) or `failed` (with the reason in `error`). A message sent with
+another key answers `404`, the same as one that does not exist.
+
+Delivery is at-least-once. A transport error (a timeout, a dropped connection) is retried twice, and if
+the provider had in fact accepted the message before the response was lost, the retry sends it again.
+Duplicate delivery jobs are harmless: a job delivers only after it moves the message from `queued` to
+`sending` in one conditional update, and only that same job may pick it up again on a retry.
+
+A sweep runs every 5 minutes (Solid Queue's scheduler, from `config/recurring.yml`). A message still
+`queued` after 15 minutes lost its job and is queued again. A message still `sending` after an hour is
+marked `failed` with `"delivery outcome unknown; check the provider before resending"` and is never
+resent automatically.
 
 ## Backups
 

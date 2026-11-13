@@ -162,6 +162,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_13_110000) do
     t.datetime "sent_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "delivery_job_id"
     t.index ["api_key_id", "idempotency_key"], name: "index_outbound_messages_on_api_key_id_and_idempotency_key", unique: true, where: "idempotency_key IS NOT NULL"
     t.index ["api_key_id"], name: "index_outbound_messages_on_api_key_id"
     t.index ["kind"], name: "index_outbound_messages_on_kind"
