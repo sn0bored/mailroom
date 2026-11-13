@@ -29,4 +29,30 @@ class DomainTest < ActiveSupport::TestCase
     domain.forward_mode = "invalid"
     assert_not domain.valid?
   end
+
+  test "a catch-all mailbox is normalised and must be on the domain itself" do
+    domain = Domain.create!(name: "example.org", catch_all_mailbox: "  Info@Example.ORG ")
+    assert_equal "info@example.org", domain.catch_all_mailbox
+    domain.update!(catch_all_mailbox: " ")
+    assert_nil domain.catch_all_mailbox
+
+    [ "info@example.net", "info@mail.example.org", "example.org", "@example.org", "in fo@example.org", "a@b@example.org" ].each do |address|
+      domain.catch_all_mailbox = address
+      assert_not domain.valid?, address
+      assert_includes domain.errors[:catch_all_mailbox], "must be an address on this domain, such as info@example.org"
+    end
+  end
+
+  test "a catch-all mailbox can't also be where copies are forwarded" do
+    domain = Domain.new(name: "example.org", forward_copy_to: "Info@example.org", catch_all_mailbox: "info@example.org")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mailbox], "can't also be where copies are forwarded"
+  end
+
+  test "only active domains contribute catch-all mailboxes" do
+    Domain.create!(name: "example.org", catch_all_mailbox: "info@example.org")
+    Domain.create!(name: "example.net", catch_all_mailbox: "hello@example.net", active: false)
+    Domain.create!(name: "example.com")
+    assert_equal [ "info@example.org" ], Domain.catch_all_mailboxes
+  end
 end

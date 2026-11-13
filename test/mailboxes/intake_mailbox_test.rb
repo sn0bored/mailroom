@@ -243,4 +243,50 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     inbound.route
     assert Message.exists?(inbound_email_id: inbound.id)
   end
+
+  test "a hosted catch-all mailbox resolves to the address the sender used" do
+    @domain.update!(catch_all_mailbox: "info@example.org", forward_mode: "listed", forward_addresses: [ "careers" ])
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + hosted_source)
+    assert_equal @domain, message.domain
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert_equal %w[info@example.org careers@example.org], message.matched_addresses
+    assert message.routing_trace.include?({ "header" => "catch_all_mailbox", "address" => "info@example.org" })
+    assert_equal "queued", message.forward_status, "listed forwarding sees the recovered address"
+    assert_enqueued_with(job: ForwardCopyJob, args: [ message.id ])
+  end
+
+  test "without a catch-all mailbox, hosted mail still lands as the mailbox" do
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + hosted_source)
+    assert_equal @domain, message.domain
+    assert_equal "info@example.org", message.to_address
+    assert_equal "hdr:Delivered-To", message.routed_via
+  end
+
+  test "bcc and multi-recipient mail through a hosted mailbox stays on its domain" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    Domain.create!(name: "example.net")
+    bcc = hosted_source.sub("To: Careers Team <careers@example.org>", "To: someone@example.net").sub("hosted-0001", "hosted-bcc")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + bcc)
+    assert_equal @domain, message.domain
+    assert_equal "careers@example.org", message.to_address
+
+    several = hosted_source.sub("\tfor <careers@example.org>; ", "\t").sub("hosted-0001", "hosted-several")
+                           .sub("To: Careers Team <careers@example.org>", "To: someone@example.net, press@example.org, careers@example.org")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + several)
+    assert_equal @domain, message.domain
+    assert_equal "press@example.org", message.to_address
+    assert_equal "catch-all:To", message.routed_via
+  end
+
+  test "a probe sent through a hosted mailbox is recognised, not flagged as a loop" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    source = "X-Mailroom-Instance: #{Mailroom.instance_id}\nX-Original-To: abc123hash@inbound.postmarkapp.com\n" +
+      hosted_source.gsub("careers@example.org", @domain.probe_address)
+    message = receive_source(source)
+    assert_equal @domain.probe_address, message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert @domain.reload.probe_received_at.present?
+    assert_equal "skipped:probe", message.forward_status
+  end
 end

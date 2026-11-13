@@ -42,6 +42,23 @@ registrar catch-all          Postmark inbound           Mailroom (Rails, SQLite)
 Prefer MX records? Point `MX 10 inbound.postmarkapp.com` at a subdomain and set it as the Postmark
 server's inbound domain. Mailroom routes it the same way.
 
+## Domains that keep a hosted mailbox
+
+If a domain already has real email (Namecheap Private Email, Fastmail, Google Workspace and so on),
+forward from a mailbox there instead of the registrar:
+
+1. At the mail host, make one mailbox, say `info@example.org`, the domain's catch-all.
+2. In that mailbox, add an auto-forward rule that sends everything to the inbound address the Domains
+   page shows, keeping a copy. Gmail first mails a confirmation code to that address; it shows up in
+   Mailroom as unrouted.
+3. In Mailroom, enter `info@example.org` as the domain's hosted catch-all mailbox.
+
+The host stamps its mailbox on everything it forwards, so without step 3 every message shows as
+`info@`. With it, Mailroom looks past the mailbox, on the same domain only: first headers that record
+the original recipient (such as `X-Original-To`, `X-Gm-Original-To`, `X-Delivered-To` or
+`Envelope-To`), then the oldest `Received: ... for <address>` hop, then `To` and `Cc`. Mail sent to
+`info@` itself stays there. These messages show `routed_via: catch-all:<header>`.
+
 ## Setup
 
 Requirements: Ruby 3.3, SQLite 3, a Postmark account with inbound processing (the server token is

@@ -18,6 +18,7 @@ module ActiveSupport
 
     def forwarded_source = file_fixture("forwarded_sample.eml").read
     def mx_source = file_fixture("mx_mode_sample.eml").read
+    def hosted_source = file_fixture("hosted_mailbox_redirect.eml").read
 
     def receive_source(source)
       inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(source)

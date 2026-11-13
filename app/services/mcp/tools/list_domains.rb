@@ -10,12 +10,16 @@ module Mcp
         domains = Domain.order(:name).map do |d|
           {
             name: d.name, active: d.active, receiving: d.receiving?, send_enabled: d.send_enabled,
+            catch_all_mailbox: d.catch_all_mailbox,
             last_received_at: d.last_received_at&.utc&.iso8601,
             unread: d.messages.inbox.unread.count, total: d.messages.count
           }
         end
         unrouted = Message.unrouted.inbox.count
-        lines = domains.map { |d| "#{d[:name]} | #{d[:receiving] ? 'receiving' : 'waiting for mail'} | unread=#{d[:unread]} total=#{d[:total]} | send=#{d[:send_enabled] ? 'on' : 'off'}" }
+        lines = domains.map do |d|
+          line = "#{d[:name]} | #{d[:receiving] ? 'receiving' : 'waiting for mail'} | unread=#{d[:unread]} total=#{d[:total]} | send=#{d[:send_enabled] ? 'on' : 'off'}"
+          d[:catch_all_mailbox] ? "#{line} | catch-all mailbox=#{d[:catch_all_mailbox]}" : line
+        end
         lines << "unrouted messages: #{unrouted}"
         audit("mcp.list_domains")
         text_result(lines.join("\n"), { domains: domains, unrouted: unrouted })

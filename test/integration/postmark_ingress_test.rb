@@ -32,4 +32,18 @@ class PostmarkIngressTest < ActionDispatch::IntegrationTest
          headers: { "Authorization" => ActionController::HttpAuthentication::Basic.encode_credentials("actionmailbox", "nope") }
     assert_response :unauthorized
   end
+
+  test "a hosted mailbox redirect is routed to the address the sender used" do
+    Domain.find_by!(name: "example.org").update!(catch_all_mailbox: "info@example.org")
+    payload = JSON.parse(file_fixture("postmark_inbound.json").read)
+    payload["RawEmail"] = file_fixture("hosted_mailbox_redirect.eml").read
+    perform_enqueued_jobs do
+      post "/rails/action_mailbox/postmark/inbound_emails", params: payload, as: :json, headers: { "Authorization" => @auth }
+    end
+    assert_response :no_content
+    message = Message.last
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert_includes message.routing_trace, { "header" => "X-Original-To", "address" => "abc123hash@inbound.postmarkapp.com" }
+  end
 end
