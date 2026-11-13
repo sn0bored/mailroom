@@ -29,7 +29,11 @@ class ForwardMailer < ApplicationMailer
   private
 
   def original_html(record)
-    Mail.new(record.raw_source).html_part&.decoded if record.has_html?
+    return nil unless record.has_html?
+    mail = Mail.new(record.raw_source)
+    # Mirror Intake::MessageBuilder#html_source: a single-part text/html mail has no html_part,
+    # so its HTML body lives in the mail itself. Reading only html_part dropped it on forward.
+    mail.multipart? ? mail.html_part&.decoded : mail.decoded
   rescue StandardError
     nil
   end

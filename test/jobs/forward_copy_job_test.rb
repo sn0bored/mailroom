@@ -136,6 +136,17 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     assert_equal "failed:Postmark::TimeoutError", @record.reload.forward_status
   end
 
+  test "original html is forwarded for single-part text/html mail" do
+    @record.has_html = true
+    raw = Mail.new do
+      content_type "text/html; charset=UTF-8"
+      body "<p>single</p>"
+    end.to_s
+    Mailroom.stub(:forward_sender, "forward@example.org") do
+      @record.stub(:raw_source, raw) { assert_equal "<p>single</p>", ForwardMailer.copy(@record).message.html_part&.decoded }
+    end
+  end
+
   test "failure status contains only class" do
     Mailroom.stub(:forward_sender, "forward@example.org") do
       ForwardMailer.stub(:copy, ->(*) { raise ArgumentError, "private" }) { ForwardCopyJob.perform_now(@record.id) }
