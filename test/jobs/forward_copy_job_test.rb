@@ -10,13 +10,13 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     @domain = Domain.create!(name: "example.org", forward_copy_to: "owner@example.net")
     inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(File.read("test/fixtures/files/forwarded_sample.eml"))
     @record = Message.create!(domain: @domain, inbound_email: inbound, to_address: "inbox@example.org",
-      from_address: "sender@example.net", from_name: "Example Sender", subject: "Original", body_text: "Body", received_at: Time.current)
+      from_address: "sender@example.net", from_name: "Example Sender", subject: "Original", body_text: "Body", forward_status: "queued", received_at: Time.current)
   end
 
   test "unrouted messages are ignored" do
     @record.update!(domain: nil)
     ForwardCopyJob.perform_now(@record.id)
-    assert_nil @record.reload.forward_status
+    assert_equal "skipped:unrouted", @record.reload.forward_status
     assert_empty ActionMailer::Base.deliveries
   end
 
@@ -33,10 +33,12 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     ForwardCopyJob.perform_now(@record.id)
     assert_equal "skipped:forward_off", @record.reload.forward_status
     assert_empty ActionMailer::Base.deliveries
+    @record.update!(forward_status: "queued")
     @domain.update!(forward_mode: "listed", forward_addresses: [ "other" ])
     ForwardCopyJob.perform_now(@record.id)
     assert_equal "skipped:not_listed", @record.reload.forward_status
     assert_empty ActionMailer::Base.deliveries
+    @record.update!(forward_status: "queued")
     @domain.update!(forward_addresses: [ "INBOX@EXAMPLE.ORG" ])
     Mailroom.stub(:forward_sender, "forward@example.org") { ForwardCopyJob.perform_now(@record.id) }
     assert_equal "sent", @record.reload.forward_status
@@ -159,5 +161,108 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
       ForwardMailer.stub(:copy, ->(*) { raise ArgumentError, "private" }) { ForwardCopyJob.perform_now(@record.id) }
     end
     assert_equal "failed:ArgumentError", @record.reload.forward_status
+  end
+
+  test "racing copies claim once and consume one throttle slot" do
+    raced = false
+    checks = 0
+    copy = ForwardMailer.method(:copy)
+    race = ->(record) do
+      unless raced
+        raced = true
+        ForwardCopyJob.perform_now(record.id)
+      end
+      copy.call(record)
+    end
+    Mailroom.stub(:forward_sender, "forward@example.org") do
+      ForwardThrottle.stub(:allow?, ->(*) { checks += 1; true }) do
+        ForwardMailer.stub(:copy, race) { ForwardCopyJob.perform_now(@record.id) }
+      end
+    end
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal 1, checks
+    assert_equal "sent", @record.reload.forward_status
+  end
+
+  test "same execution redispatch cannot send an unfinished claim again" do
+    job = ForwardCopyJob.new(@record.id)
+    serialized = job.serialize
+    # Simulate a worker stopping after provider acceptance, before recording sent.
+    Message.stub(:find, @record) do
+      @record.stub(:update!, ->(*) { }) do
+        @record.stub(:update_columns, ->(*) { }) do
+          Mailroom.stub(:forward_sender, "forward@example.org") { job.perform_now }
+        end
+      end
+    end
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    Mailroom.stub(:forward_sender, "forward@example.org") do
+      assert_no_difference("ActionMailer::Base.deliveries.size") do
+        ForwardCopyJob.deserialize(serialized).perform_now
+      end
+    end
+    assert_equal "sending", @record.reload.forward_status
+    assert_equal 1, @record.forward_attempt
+  end
+
+  test "transport retry reclaims only its own later attempt" do
+    calls = 0
+    copy = ForwardMailer.method(:copy)
+    job = ForwardCopyJob.new(@record.id)
+    flaky = ->(record) do
+      calls += 1
+      if calls == 1
+        ForwardCopyJob.perform_now(record.id)
+        raise Postmark::TimeoutError.new(StandardError.new("private"))
+      end
+      copy.call(record)
+    end
+    Mailroom.stub(:forward_sender, "forward@example.org") do
+      ForwardMailer.stub(:copy, flaky) do
+        perform_enqueued_jobs(only: ForwardCopyJob) { job.enqueue }
+      end
+    end
+    assert_equal 2, calls
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal "sent", @record.reload.forward_status
+    assert_equal job.job_id, @record.forward_job_id
+    assert_equal 2, @record.forward_attempt
+  end
+
+  test "sent survives bookkeeping errors including transport errors" do
+    [ RuntimeError, Errno::ECONNRESET ].each do |error_class|
+      @record.update!(forward_status: "queued")
+      recorded = false
+      bookkeeping = ->(*, **) { recorded = true; raise error_class, "bookkeeping unavailable" }
+      update = @record.method(:update!)
+      # The old job runs callbacks after writing sent. The claim-based job bypasses those
+      # callbacks and records its audit afterwards; fail either post-send bookkeeping path.
+      update_with_callback = ->(attributes) do
+        update.call(attributes)
+        bookkeeping.call if attributes[:forward_status] == "sent"
+      end
+      Message.stub(:find, @record) do
+        @record.stub(:update!, update_with_callback) do
+          Audit.stub(:record, bookkeeping) do
+            Mailroom.stub(:forward_sender, "forward@example.org") do
+              assert_difference("ActionMailer::Base.deliveries.size", 1) do
+                perform_enqueued_jobs(only: ForwardCopyJob) { ForwardCopyJob.perform_later(@record.id) }
+              end
+            end
+          end
+        end
+      end
+      assert recorded
+      assert_equal "sent", @record.reload.forward_status
+    end
+  end
+
+  test "finished or unqueued copies cannot be claimed" do
+    [ nil, "sent", "failed:outcome_unknown", "skipped:blocked", "sending" ].each do |status|
+      @record.update!(forward_status: status)
+      Mailroom.stub(:forward_sender, "forward@example.org") { ForwardCopyJob.perform_now(@record.id) }
+      assert_empty ActionMailer::Base.deliveries
+      status.nil? ? assert_nil(@record.reload.forward_status) : assert_equal(status, @record.reload.forward_status)
+    end
   end
 end

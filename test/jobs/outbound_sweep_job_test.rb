@@ -56,4 +56,19 @@ class OutboundSweepJobTest < ActiveSupport::TestCase
     assert_equal OutboundSweepJob, task["class"].constantize
     assert_kind_of Fugit::Cron, Fugit.parse(task["schedule"], multi: :fail)
   end
+
+  test "stale forwarding claims fail with unknown outcome and never resend" do
+    inbound = -> { ActionMailbox::InboundEmail.create_and_extract_message_id!("Message-ID: <#{SecureRandom.uuid}@example.net>\n\nBody") }
+    stale = Message.create!(inbound_email: inbound.call, received_at: Time.current, forward_status: "sending")
+    stale.update_columns(updated_at: 2.hours.ago)
+    recent = Message.create!(inbound_email: inbound.call, received_at: Time.current, forward_status: "sending")
+    sent = Message.create!(inbound_email: inbound.call, received_at: Time.current, forward_status: "sent")
+    sent.update_columns(updated_at: 2.hours.ago)
+    assert_no_enqueued_jobs(only: ForwardCopyJob) { OutboundSweepJob.perform_now }
+    assert_equal "failed:outcome_unknown", stale.reload.forward_status
+    assert_equal "sending", recent.reload.forward_status
+    assert_equal "sent", sent.reload.forward_status
+    ForwardCopyJob.perform_now(stale.id)
+    assert_empty ActionMailer::Base.deliveries
+  end
 end
