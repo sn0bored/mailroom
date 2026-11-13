@@ -34,5 +34,6 @@ message is hostile until a human says otherwise.
 
 ## Reporting
 
-Open a private security advisory on the repository, or email the maintainer address listed on the
-repository profile. Please do not open public issues for security problems.
+Email the maintainer address listed on the repository profile. If private security advisories are
+enabled on the repository (Settings → Security), you may open one there instead. Please do not open
+public issues for security problems.
