@@ -2,7 +2,7 @@ require "test_helper"
 
 class PreflightTest < ActiveSupport::TestCase
   READY = {
-    "SECRET_KEY_BASE" => "x", "RAILS_INBOUND_EMAIL_PASSWORD" => "x",
+    "SECRET_KEY_BASE" => "x", "RAILS_INBOUND_EMAIL_PASSWORD" => "p" * 32,
     "MAILROOM_PORT" => "3100", "MAILROOM_PUBLIC_PORT" => "3101"
   }.freeze
 
@@ -17,8 +17,13 @@ class PreflightTest < ActiveSupport::TestCase
   end
 
   test "missing secrets are refused" do
-    assert_includes problems("SECRET_KEY_BASE" => nil, "RAILS_INBOUND_EMAIL_PASSWORD" => ""),
-      "SECRET_KEY_BASE, RAILS_INBOUND_EMAIL_PASSWORD not set"
+    assert_equal [ "SECRET_KEY_BASE not set", "RAILS_INBOUND_EMAIL_PASSWORD not set" ],
+      problems("SECRET_KEY_BASE" => nil, "RAILS_INBOUND_EMAIL_PASSWORD" => "")
+  end
+
+  test "a short ingress password is refused" do
+    assert_equal [ "RAILS_INBOUND_EMAIL_PASSWORD is shorter than 32 characters" ],
+      problems("RAILS_INBOUND_EMAIL_PASSWORD" => "p" * 31)
   end
 
   test "the public listener must be set and separate" do

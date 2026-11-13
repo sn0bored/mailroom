@@ -1,9 +1,16 @@
 module Mailroom
   # Production boot checks. Each problem is a reason to refuse to start.
   module Preflight
+    MIN_INGRESS_PASSWORD = 32
+
     def self.problems(env = ENV)
-      missing = %w[SECRET_KEY_BASE RAILS_INBOUND_EMAIL_PASSWORD].select { |k| env[k].blank? }
-      [ ("#{missing.join(', ')} not set" if missing.any?), *listener_problems(env) ].compact
+      password = Mailroom.ingress_password(env)
+      [
+        ("SECRET_KEY_BASE not set" if env["SECRET_KEY_BASE"].blank?),
+        ("RAILS_INBOUND_EMAIL_PASSWORD not set" if password.blank?),
+        ("RAILS_INBOUND_EMAIL_PASSWORD is shorter than #{MIN_INGRESS_PASSWORD} characters" if password.present? && password.length < MIN_INGRESS_PASSWORD),
+        *listener_problems(env)
+      ].compact
     end
 
     # The public tunnel or proxy must have a listener of its own, or Mailroom::IngressGate has nothing
