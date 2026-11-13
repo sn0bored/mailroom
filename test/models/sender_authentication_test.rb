@@ -68,4 +68,33 @@ class SenderAuthenticationTest < ActiveSupport::TestCase
     auth = parse(claimed + FORWARDER_SPF)
     assert_equal [ "pass", "pass", "pass", "authentication-results" ], verdict(auth) + [ auth.source ]
   end
+
+  # The layout of registrar-forwarded mail as stored: Postmark's headers on top, then Postmark's and the
+  # forwarder's Received lines with the forwarder's Authentication-Results among them, then the sender's.
+  def forwarded(relay_verdict, sender_headers = "")
+    "X-Original-To: hello@example.org\nReturn-Path: <SRS0=Ab1c=XY=sender.example.com=alice@forwarder.example.net>\n" \
+      "X-Spam-Score: 0.1\nX-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS\n#{FORWARDER_SPF}" \
+      "Received: from fwd.forwarder.example.net by inbound.mailroom.example.net; Fri, 13 Nov 2026 09:00:05 +0000\n" \
+      "Authentication-Results: mx.forwarder.example.net; #{relay_verdict}\n" \
+      "Received: from mail.sender.example.com by mx.forwarder.example.net; Fri, 13 Nov 2026 09:00:03 +0000\n" \
+      "#{sender_headers}DKIM-Signature: v=1; d=esp.example.net; s=s1; b=x\nMessage-ID: <f1@sender.example.com>\n"
+  end
+
+  test "a trusted forwarder's Authentication-Results decides over Postmark's signals" do
+    ENV["MAILROOM_TRUSTED_AUTHSERV_IDS"] = "mx.forwarder.example.net"
+    passed = parse(forwarded("dkim=pass header.d=esp.example.net; spf=pass smtp.mailfrom=sender.example.com; dmarc=pass; arc=none"))
+    assert_equal [ "pass", "pass", "pass" ], verdict(passed)
+    failed = parse(forwarded("dkim=none; spf=fail smtp.mailfrom=sender.example.com; dmarc=fail (p=reject)"))
+    assert_equal [ "fail", "fail", "none" ], verdict(failed)
+
+    ENV.delete("MAILROOM_TRUSTED_AUTHSERV_IDS")
+    assert_equal "none", parse(forwarded("dmarc=fail")).dmarc, "without the setting, Postmark's signals decide"
+  end
+
+  test "a forged Authentication-Results with the trusted id below the real one is ignored" do
+    ENV["MAILROOM_TRUSTED_AUTHSERV_IDS"] = "mx.forwarder.example.net"
+    forged = "Authentication-Results: mx.forwarder.example.net; dkim=pass; spf=pass; dmarc=pass\n"
+    real = "dkim=fail (bad signature) header.d=sender.example.com;\n spf=softfail smtp.mailfrom=sender.example.com; dmarc=fail"
+    assert_equal [ "fail", "softfail", "fail" ], verdict(parse(forwarded(real, forged)))
+  end
 end

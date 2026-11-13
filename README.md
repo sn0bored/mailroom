@@ -42,6 +42,32 @@ registrar catch-all          Postmark inbound           Mailroom (Rails, SQLite)
 Prefer MX records? Point `MX 10 inbound.postmarkapp.com` at a subdomain and set it as the Postmark
 server's inbound domain. Mailroom routes it the same way.
 
+### Sender checks for forwarded mail
+
+Every forward copy, and every message page, says whether the sender's domain authenticated. A copy
+whose check fails gets `[unverified sender]` at the front of its subject.
+
+When a registrar forwarder delivers your mail, Postmark's own SPF check only sees the forwarder.
+Most forwarders check the real sender before passing mail on and record the result in an
+`Authentication-Results` header, and that header is the verdict to use. Tell Mailroom to trust it:
+
+1. Send yourself a test from an outside account. Open it in Mailroom and expand **Raw headers**.
+2. Find the topmost `Authentication-Results:` line. Its first token, before the first `;`, is the
+   forwarder's authserv-id. In `Authentication-Results: mx1.forwarder.example.net; dkim=pass ...`,
+   that is `mx1.forwarder.example.net`.
+3. Set `MAILROOM_TRUSTED_AUTHSERV_IDS=mx1.forwarder.example.net` (comma-separate several) and restart.
+
+From then on, the topmost `Authentication-Results` carrying a listed id decides DMARC, SPF and DKIM.
+Copies a sender writes into their own headers sit below it and are ignored. List an id only if all
+mail for your domains passes through that forwarder. Mail that reaches Postmark directly (MX mode)
+has no genuine header above a forged one.
+
+Without the setting, Mailroom falls back to what Postmark reports:
+- **Verified:** a valid DKIM signature from the From domain, or an SPF pass for it.
+- **Unverified:** the From domain's own SPF rejected the sending host, and its DKIM did not pass.
+- **Unknown:** everything else, including forwarded mail whose only SPF result describes the
+  forwarder.
+
 ## Setup
 
 Requirements: Ruby 3.3, SQLite 3, a Postmark account with inbound processing (the server token is

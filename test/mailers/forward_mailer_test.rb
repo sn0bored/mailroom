@@ -85,6 +85,15 @@ class ForwardMailerTest < ActiveSupport::TestCase
     assert_includes copy.html_part.decoded, "Sender check: unknown (DMARC none, SPF none, DKIM none)"
   end
 
+  test "a trusted forwarder's verdict decides the tag" do
+    ENV["MAILROOM_TRUSTED_AUTHSERV_IDS"] = "mx.forwarder.example.net"
+    forwarder_spf = "Received-SPF: Pass identity=mailfrom; envelope-from=service@forwarder.example.net\n"
+    relay = ->(verdict) { "#{forwarder_spf}Authentication-Results: mx.forwarder.example.net; #{verdict}\n" }
+    assert_equal "[example.org] Account locked", copy_of(receive(provider_headers: relay.("dkim=pass; spf=pass; dmarc=pass"))).subject
+    assert_equal "[unverified sender] [example.org] Account locked",
+      copy_of(receive(provider_headers: relay.("dkim=none; spf=fail; dmarc=fail"))).subject
+  end
+
   test "no provider signals means no verdict line and no tag" do
     copy = copy_of(receive)
     assert_equal "[example.org] Account locked", copy.subject

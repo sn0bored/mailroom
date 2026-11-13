@@ -24,13 +24,15 @@ message is hostile until a human says otherwise.
   `object-src 'none'`, `frame-ancestors 'none'`).
 - **Forward copies name their sender.** A forward copy comes from the owner's own domain, so its HTML
   is sanitized against an allowlist (no script, forms, frames, embeds or remote images) and starts
-  with a banner giving the original From, To, Date and sender check. When the From domain did not
-  authenticate (no valid DKIM signature from it and no aligned SPF pass), the subject is tagged
-  `[unverified sender]`. Postmark reports SPF and DKIM but not DMARC, so this check does not read the
-  domain's DMARC policy. Set `MAILROOM_TRUSTED_AUTHSERV_IDS` to believe a mailbox host's
-  `Authentication-Results` instead; only the topmost one with a listed authserv-id counts.
+  with a banner giving the original From, To, Date and sender check. A failed check tags the subject
+  `[unverified sender]`. The check comes from the registrar forwarder's `Authentication-Results` when
+  its authserv-id is listed in `MAILROOM_TRUSTED_AUTHSERV_IDS`; only the topmost header with a listed
+  id counts. Otherwise it comes from Postmark's SPF and DKIM results, which cannot vouch for forwarded
+  mail and leave it "unknown" (see "Sender checks" in the README).
 - **Loop marker.** Forward copies and probes carry `X-Mailroom-Loop`, an HMAC of their own Message-ID,
   so a marker copied into other mail does not suppress its forward copy. Replies carry no marker.
+- **No hostname in Message-IDs.** Every message Mailroom sends has a Message-ID of the form
+  `<uuid@From domain>`, never the Mail gem's default, which ends in the machine's hostname.
 - **Logs.** Raw payloads, tokens, passwords and mail bodies are filtered from the Rails log. The webhook
   URL, which embeds the ingress password, is never printed.
 - **Throttling.** Logins, agent and API traffic, and sends are rate limited.

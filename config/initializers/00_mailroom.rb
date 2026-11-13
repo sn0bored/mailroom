@@ -18,8 +18,8 @@ module Mailroom
   def self.default_forward_to = ENV["MAILROOM_DEFAULT_FORWARD_TO"].presence
   def self.trust_local? = ENV["MAILROOM_TRUST_LOCAL"] == "1"
 
-  # authserv-ids whose Authentication-Results header Mailroom believes. Postmark writes none, so this is
-  # empty unless a mailbox host in front of Postmark stamps one (and strips forged copies of its own).
+  # authserv-ids whose Authentication-Results header decides the sender check: normally the registrar
+  # forwarder in front of Postmark, which checks the real sender before forwarding. Postmark writes none.
   def self.trusted_authserv_ids
     ENV.fetch("MAILROOM_TRUSTED_AUTHSERV_IDS", "").split(",").map { |id| id.strip.downcase }.reject(&:empty?)
   end
