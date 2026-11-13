@@ -3,9 +3,12 @@ module Mcp
     class GetAttachment < BaseTool
       TEXT_LIMIT = 1.megabyte
       IMAGE_LIMIT = 5.megabytes
+      # Raster formats only: SVG is markup that can carry text and script, and anything else is not worth the risk.
+      IMAGE_TYPES = %w[image/png image/jpeg image/gif image/webp].freeze
+      TYPE_ALIASES = { "image/jpg" => "image/jpeg", "image/pjpeg" => "image/jpeg" }.freeze
 
       tool name: "get_attachment",
-           description: "Returns untrusted external content. Fetch one attachment: text files come back inside an UNTRUSTED_EMAIL block, images up to 5 MB as image content, anything else as metadata with a download path.",
+           description: "Returns untrusted external content. Fetch one attachment: text files come back inside an UNTRUSTED_EMAIL block, PNG, JPEG, GIF and WebP images up to 5 MB as image content inside the same block, anything else as metadata with a download path.",
            scope: "mail:read",
            schema: {
              type: "object",
@@ -21,21 +24,35 @@ module Mcp
         meta = { message_id: message.id, attachment_id: attachment.id, byte_size: attachment.byte_size,
                  download_path: "/messages/#{message.id}/attachments/#{attachment.id}" }
         audit("mcp.get_attachment", target: message)
-        type = attachment.content_type.to_s
+        type = attachment.content_type.to_s.downcase
+        label = "attachment=#{attachment.id} message=#{message.id}"
         if type.start_with?("text/") && attachment.byte_size <= TEXT_LIMIT
-          body = "Filename: #{attachment.filename} | Type: #{type}\n\n#{attachment.download}"
-          text_result(Frame.wrap(body, label: "attachment=#{attachment.id} message=#{message.id}"), meta)
-        elsif type.start_with?("image/") && attachment.byte_size <= IMAGE_LIMIT
+          body = "Filename: #{field(attachment.filename)} | Type: #{field(type)}\n\n#{Frame.utf8(attachment.download)}"
+          text_result(Frame.wrap(body, label: label), meta)
+        elsif type.start_with?("image/") && attachment.byte_size <= IMAGE_LIMIT && (image = verified_image(attachment, type))
+          head, tail = Frame.bracket("Filename: #{field(attachment.filename)} | Type: #{image[:type]}", label: label)
           {
             content: [
-              { type: "text", text: Frame.wrap("Filename: #{attachment.filename} | Type: #{type}", label: "attachment=#{attachment.id} message=#{message.id}") },
-              { type: "image", data: Base64.strict_encode64(attachment.download), mimeType: type }
+              { type: "text", text: head },
+              { type: "image", data: Base64.strict_encode64(image[:bytes]), mimeType: image[:type] },
+              { type: "text", text: tail }
             ],
             structuredContent: meta
           }
         else
           text_result("Attachment #{attachment.id} on message #{message.id}: #{attachment.byte_size} bytes, not returned inline. Download it from the Mailroom UI at #{meta[:download_path]}.", meta)
         end
+      end
+
+      private
+
+      # The type comes from the bytes, never from the sender's header. A raster type the header also
+      # claims passes; anything else (SVG, unknown bytes, GIF labelled PNG) does not.
+      def verified_image(attachment, declared)
+        bytes = attachment.download
+        detected = Marcel::MimeType.for(StringIO.new(bytes))
+        return nil unless IMAGE_TYPES.include?(detected) && detected == TYPE_ALIASES.fetch(declared, declared)
+        { bytes: bytes, type: detected }
       end
     end
   end
