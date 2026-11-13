@@ -57,6 +57,12 @@ Puma::Plugins.register("mailroom_listeners", Class.new(Puma::Plugin) do
 end)
 plugin :mailroom_listeners
 
+# Postmark accepts inbound mail with up to 35 MB of attachments. Its JSON carries them twice: base64 in
+# the Attachments array (~47 MB) and again inside RawEmail with MIME line breaks and JSON escaping
+# (~49 MB), plus the decoded bodies. 100 MB covers that; Puma answers 413 above it, before spooling the
+# body to disk or calling the app. Chunked bodies are counted as they arrive.
+http_content_length_limit 100 * 1024 * 1024
+
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart
 
