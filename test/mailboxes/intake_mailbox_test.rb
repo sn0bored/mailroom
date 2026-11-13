@@ -365,4 +365,36 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_equal "error", message.routed_via
     assert_equal "SystemStackError", message.parse_error
   end
+
+  test "a sender who copies a Message-ID and arrives first does not swallow the real message" do
+    forged = forwarded_source.sub("From: Alice Example <alice@sender.example.net>", "From: Mallory <m@sender.example.net>")
+                             .sub(/This message was sent.*\z/m, "Please wire the money to a new account.\n")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forged)
+    real = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+
+    assert real, "the real message gets its own row"
+    assert_equal 2, Message.count
+    assert_equal "alice@sender.example.net", real.from_address
+    assert_match(/forwarded by the registrar/, real.body_text)
+    assert_equal "skipped:duplicate_id", real.forward_status, "no second copy to the same place"
+    assert_equal "queued", first.reload.forward_status
+    assert_not first.routing_trace.any? { |t| t["header"] == "duplicate" }
+  end
+
+  test "the same body with different line endings is still a duplicate" do
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    again = receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\r\n" + forwarded_source.gsub("\n", "\r\n"))
+    assert_nil again
+    assert_equal 1, Message.count
+    assert first.reload.routing_trace.any? { |t| t["header"] == "duplicate" }
+    assert_equal 64, first.raw_body_digest.size
+  end
+
+  test "merged matches stay capped" do
+    many = (1..60).map { |i| "u#{i}@example.org" }.join(", ")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{many}"))
+    others = (61..120).map { |i| "u#{i}@example.org" }.join(", ")
+    receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{others}"))
+    assert_equal Intake::RecipientResolver::MAX_MATCHES, first.reload.matched_addresses.size
+  end
 end

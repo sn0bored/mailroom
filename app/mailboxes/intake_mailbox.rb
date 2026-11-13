@@ -12,7 +12,8 @@ class IntakeMailbox < ApplicationMailbox
 
     resolution = Intake::RecipientResolver.call(mail)
 
-    if (existing = duplicate_of(resolution))
+    same_id = same_message_id_for_target(resolution)
+    if (existing = same_id.find { |prior| prior.raw_body_digest.present? && prior.raw_body_digest == raw_body_digest })
       merge_duplicate(existing, resolution)
       return
     end
@@ -23,13 +24,14 @@ class IntakeMailbox < ApplicationMailbox
     # A probe is our own mail coming back on purpose; anything else carrying our instance header is a loop.
     message.routed_via = "loop" if loop? && !probe
     message.blocked = BlockedSender.blocks?(message.from_address)
+    message.raw_body_digest = raw_body_digest
     message.save!
     builder.attach_to(message)
 
     message.domain&.update!(last_received_at: Time.current)
     message.domain.update!(probe_received_at: Time.current) if probe
 
-    dispatch_forward_copy(message, probe: probe)
+    dispatch_forward_copy(message, probe: probe, repeated_id: same_id.any?)
   # SystemStackError is not a StandardError; left unrescued it strands the email in processing.
   rescue StandardError, SystemStackError => e
     store_fallback(e)
@@ -37,22 +39,32 @@ class IntakeMailbox < ApplicationMailbox
 
   private
 
-  def duplicate_of(resolution)
-    id = mail.message_id.presence or return nil
+  # Rows with this Message-ID from the last 48 hours that went where this delivery would go: the
+  # same forward target or, when this one has none, any of them (nothing to forward, nothing to
+  # lose). A distinct target is a genuine separate delivery and gets its own row and copy.
+  #
+  # Only a matching raw body makes one of them a duplicate to merge into. Message-IDs are chosen by
+  # the sender, so one who copies a real ID and arrives first must not swallow the real message:
+  # same ID with a different body is stored too, minus a second forward copy to the same place.
+  def same_message_id_for_target(resolution)
+    id = mail.message_id.presence or return []
     prior = Message.where(rfc822_message_id: id)
                    .where("received_at > ?", DUPLICATE_WINDOW.ago)
                    .order(:received_at, :id).to_a
-    return nil if prior.empty?
-    # Collapse into the copy that already went where this one would — or, when this delivery
-    # has no forward target of its own, the earliest row (nothing to forward, nothing to lose).
-    # A distinct, not-yet-forwarded target is a genuine separate delivery: it gets its own
-    # stored message and forwarded copy rather than being merged (and dropped) as a duplicate.
+    return prior if prior.empty?
     target = forward_target_for(resolution)
-    return prior.first if target.blank?
-    prior.find { |m| m.domain&.forward_target == target }
+    target.blank? ? prior : prior.select { |m| m.domain&.forward_target == target }
   rescue StandardError => e
     Rails.logger.warn("[intake] duplicate check failed for inbound_email #{inbound_email.id}: #{e.class}")
-    nil
+    []
+  end
+
+  # SHA-256 of the raw body with line endings normalised; headers differ per delivery path.
+  def raw_body_digest
+    @raw_body_digest ||= begin
+      body = inbound_email.source.to_s.b.split(/\r?\n\r?\n/, 2)[1].to_s
+      Digest::SHA256.hexdigest(body.gsub(/\r\n?/, "\n"))
+    end
   end
 
   def forward_target_for(resolution)
@@ -62,7 +74,7 @@ class IntakeMailbox < ApplicationMailbox
 
   def merge_duplicate(existing, resolution)
     existing.update!(
-      matched_addresses: (Array(existing.matched_addresses) + resolution.matches).uniq,
+      matched_addresses: (Array(existing.matched_addresses) + resolution.matches).uniq.first(Intake::RecipientResolver::MAX_MATCHES),
       routing_trace: Array(existing.routing_trace) + [ { "header" => "duplicate", "address" => "inbound_email:#{inbound_email.id}" } ]
     )
   end
@@ -79,8 +91,8 @@ class IntakeMailbox < ApplicationMailbox
     token.present? && message.domain.probe_token.present? && token.casecmp?(message.domain.probe_token)
   end
 
-  def dispatch_forward_copy(message, probe:)
-    reason = forward_skip_reason(message, probe: probe)
+  def dispatch_forward_copy(message, probe:, repeated_id: false)
+    reason = forward_skip_reason(message, probe: probe, repeated_id: repeated_id)
     if reason
       message.update!(forward_status: "skipped:#{reason}")
       return
@@ -94,7 +106,7 @@ class IntakeMailbox < ApplicationMailbox
     end
   end
 
-  def forward_skip_reason(message, probe:)
+  def forward_skip_reason(message, probe:, repeated_id: false)
     return "blocked" if message.blocked?
     return "probe" if probe
     return "loop" if message.routed_via == "loop"
@@ -102,6 +114,7 @@ class IntakeMailbox < ApplicationMailbox
     return "no_target" if message.domain.forward_target.blank?
     return "forward_off" if message.domain.forward_mode == "off"
     return "not_listed" unless message.domain.forward_copy_for?(message)
+    return "duplicate_id" if repeated_id
     return "no_sender" if Mailroom.forward_sender.blank?
     return "no_provider" unless Mailroom.sending_configured?
     return "list" if message.list_mail
