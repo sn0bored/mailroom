@@ -29,6 +29,11 @@ module Mailroom
     port if port&.between?(1, 65_535)
   end
 
+  # The Action Mailbox ingress password, looked up the way Action Mailbox looks it up.
+  def self.ingress_password(env = ENV)
+    Rails.application.credentials.dig(:action_mailbox, :ingress_password) || env["RAILS_INBOUND_EMAIL_PASSWORD"]
+  end
+
   # Development and test only: treat every request as internal. Production refuses to boot with it set
   # (config/initializers/preflight.rb), and any other environment ignores it.
   def self.trust_local? = Rails.env.local? && ENV["MAILROOM_TRUST_LOCAL"] == "1"
