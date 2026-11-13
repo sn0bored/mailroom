@@ -22,6 +22,8 @@ message is hostile until a human says otherwise.
   through an authenticated controller with `Content-Disposition: attachment`; blob URLs are never exposed.
   The owner UI sends a strict Content-Security-Policy (`default-src 'self'`, nonce-only inline code,
   `object-src 'none'`, `frame-ancestors 'none'`).
+- **Loop marker.** Forward copies and probes carry `X-Mailroom-Loop`, an HMAC of their own Message-ID,
+  so a marker copied into other mail does not suppress its forward copy. Replies carry no marker.
 - **Logs.** Raw payloads, tokens, passwords and mail bodies are filtered from the Rails log. The webhook
   URL, which embeds the ingress password, is never printed.
 - **Throttling.** Logins, agent and API traffic, and sends are rate limited.

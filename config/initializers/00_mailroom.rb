@@ -23,7 +23,7 @@ module Mailroom
     ENV["POSTMARK_SERVER_TOKEN"].present? || ActionMailer::Base.delivery_method == :test
   end
 
-  # Stamped on every outbound message so a copy that comes back is recognised as a loop.
+  # Names this install; also salts the loop marker key (see LoopMarker).
   def self.instance_id
     ENV["MAILROOM_INSTANCE_ID"].presence || Setting.get("instance_id") || Setting.set("instance_id", SecureRandom.hex(8)).value
   end

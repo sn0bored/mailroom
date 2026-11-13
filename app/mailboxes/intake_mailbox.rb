@@ -61,9 +61,11 @@ class IntakeMailbox < ApplicationMailbox
     )
   end
 
+  # Our own forward copy or probe coming back: the loop marker must match this message's Message-ID,
+  # so a marker lifted from one message does not mark any other.
   def loop?
-    value = mail.header.fields.find { |f| f.name.to_s.casecmp?("X-Mailroom-Instance") }&.value.to_s
-    value.present? && value == Mailroom.instance_id.to_s
+    markers = mail.header.fields.select { |f| f.name.to_s.casecmp?(LoopMarker::HEADER) }
+    markers.any? { |f| LoopMarker.valid?(mail.message_id, f.value.to_s) }
   end
 
   def probe?(message)

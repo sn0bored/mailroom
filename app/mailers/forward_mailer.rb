@@ -15,7 +15,9 @@ class ForwardMailer < ApplicationMailer
       attachments[attachment.filename.to_s] = { mime_type: attachment.content_type, content: attachment.download }
     end
     html = original_html(record)
-    headers["X-Mailroom-Instance"] = Mailroom.instance_id
+    message_id = LoopMarker.message_id_for(Mailroom.forward_sender)
+    headers["Message-ID"] = message_id
+    headers[LoopMarker::HEADER] = LoopMarker.stamp(message_id)
     headers["X-Mailroom-Message-Id"] = record.id.to_s
     headers["X-Mailroom-Original-To"] = record.to_address
     mail(from: Mailroom.forward_sender, to: record.domain.forward_target,

@@ -184,15 +184,37 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_enqueued_with(job: ForwardCopyJob, args: [ first.id ])
   end
 
-  test "our own instance header marks a loop and skips forwarding" do
-    source = "X-Mailroom-Instance: #{Mailroom.instance_id}\nX-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source
+  test "a loop marker for this message's own Message-ID marks a loop and skips forwarding" do
+    marker = LoopMarker.stamp("<sample-0001@sender.example.net>")
+    source = "#{LoopMarker::HEADER}: #{marker}\nX-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source
     message = receive_source(source)
     assert_equal "loop", message.routed_via
     assert_equal "skipped:loop", message.forward_status
   end
 
+  test "a real forward copy that comes back is caught as a loop" do
+    original = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    copy = ForwardMailer.copy(original).message
+    returned = receive_source("X-Original-To: hello@example.org\r\n" + copy.encoded)
+    assert_equal "loop", returned.routed_via
+    assert_equal "skipped:loop", returned.forward_status
+  end
+
+  test "a marker copied from one message does not suppress the forward copy of another" do
+    original = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    marker = ForwardMailer.copy(original).message[LoopMarker::HEADER].value
+    other = forwarded_source.sub("sample-0001@", "other-0001@")
+    # The old loop key was the instance id, visible on every reply; it means nothing now either.
+    source = "#{LoopMarker::HEADER}: #{marker}\nX-Mailroom-Instance: #{Mailroom.instance_id}\n" \
+      "X-Original-To: abc123hash@inbound.postmarkapp.com\n" + other
+    message = receive_source(source)
+    assert_equal "hdr:X-Original-To", message.routed_via
+    assert_equal "queued", message.forward_status
+  end
+
   test "a probe marks the domain and is not forwarded" do
-    source = "X-Mailroom-Instance: #{Mailroom.instance_id}\n" + forwarded_source.gsub("hello@example.org", @domain.probe_address)
+    source = "#{LoopMarker::HEADER}: #{LoopMarker.stamp('<sample-0001@sender.example.net>')}\n" +
+      forwarded_source.gsub("hello@example.org", @domain.probe_address)
     message = receive_source(source)
     assert_equal @domain.probe_address, message.to_address
     assert_equal "hdr:X-Original-To", message.routed_via, "a returning probe is not a loop"

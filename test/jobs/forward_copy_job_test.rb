@@ -89,7 +89,8 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     assert_equal [ "sender@example.net" ], delivery.reply_to
     assert_equal [ "owner@example.net" ], delivery.to
     assert_equal [ "forward@example.org" ], delivery.from
-    assert_equal Mailroom.instance_id, delivery["X-Mailroom-Instance"].value
+    assert LoopMarker.valid?(delivery.message_id, delivery[LoopMarker::HEADER].value)
+    assert_nil delivery["X-Mailroom-Instance"]
     assert_equal @record.id.to_s, delivery["X-Mailroom-Message-Id"].value
     assert_equal "inbox@example.org", delivery["X-Mailroom-Original-To"].value
     assert_equal Mailroom.forward_stream, delivery.message_stream
