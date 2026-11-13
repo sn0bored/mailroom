@@ -199,7 +199,7 @@ Claude Code: `claude mcp add --transport http mailroom https://<host>:8443/mcp -
 name (`"Example App <hello@example.org>"`). Its domain must be marked send-enabled and allowed for that
 key. `to`, `cc` and `bcc` take a string or an array. `GET /api/v1/health` needs no key.
 
-Every send response is the same object, which never includes subjects, addresses or bodies:
+Every accepted send response is the same object, which never includes subjects, addresses or bodies:
 
 ```json
 { "id": 42, "status": "queued", "idempotency_key": "order-1001", "error": null,
@@ -210,11 +210,14 @@ Every send response is the same object, which never includes subjects, addresses
 |---|---|
 | `202` | accepted and queued for delivery |
 | `200` | `"idempotent": true`: this key already sent a message with that `idempotency_key`; it is returned and nothing is sent again |
+| `409` | `{"error":"in_progress"}`: a request with this key is still being enqueued; retry with the same key after a short delay |
 | `403` | refused by the sending rules (`reason` says which, e.g. the domain is not send-enabled); nothing is stored |
 | `422` | invalid request (`details` lists the problems, e.g. a `from` that is not one address); nothing is stored |
 
-Idempotency keys are scoped to the API key, and only an accepted message is stored under one. A refused
-or invalid request leaves nothing behind, so retrying it with the same key is evaluated again from
+Idempotency keys are scoped to the API key. A queued row reserves the key while enqueueing is in
+progress, but a replay is not accepted until the job is recorded on the row. If enqueueing fails, the
+reservation is removed so a retry can try again. A refused or invalid request leaves nothing behind,
+so retrying it with the same key is evaluated again from
 scratch: once the owner enables sending for the domain, the same retry is queued. Retrying a key that
 was accepted never queues the message twice.
 
@@ -226,7 +229,8 @@ another key answers `404`, the same as one that does not exist.
 Delivery is at-least-once. A transport error (a timeout, a dropped connection) is retried twice, and if
 the provider had in fact accepted the message before the response was lost, the retry sends it again.
 Duplicate delivery jobs are harmless: a job delivers only after it moves the message from `queued` to
-`sending` in one conditional update, and only that same job may pick it up again on a retry.
+`sending` in one conditional update, and only that same job with a higher execution count may pick
+it up again on a transport retry. Redispatching the same execution after a worker shutdown is skipped.
 
 A sweep runs every 5 minutes (Solid Queue's scheduler, from `config/recurring.yml`). A message still
 `queued` after 15 minutes lost its job and is queued again. A message still `sending` after an hour is

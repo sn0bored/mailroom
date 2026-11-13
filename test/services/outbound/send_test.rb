@@ -17,6 +17,70 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
+  test "a stale draft cannot queue a message that was already sent" do
+    stale = OutboundMessage.find(@record.id)
+    perform_enqueued_jobs(only: OutboundDeliveryJob) { Outbound::Send.call(@record) }
+    assert_equal "sent", @record.reload.status
+
+    assert_no_difference("ActionMailer::Base.deliveries.size") do
+      assert_no_enqueued_jobs do
+        error = assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(stale) }
+        assert_equal "message is no longer a draft", error.message
+      end
+    end
+    assert_equal "sent", @record.reload.status
+  end
+
+  test "a stale draft cannot queue a message that is already queued" do
+    stale = OutboundMessage.find(@record.id)
+    Outbound::Send.call(@record)
+    assert_no_enqueued_jobs do
+      assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(stale) }
+    end
+    assert_equal "queued", @record.reload.status
+  end
+
+  test "enqueue failure does not roll back a message that has started delivery" do
+    queue_down = ->(*) do
+      OutboundMessage.where(id: @record.id).update_all(status: "sending")
+      raise SolidQueue::Job::EnqueueError, "queue down"
+    end
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record) }
+    end
+    assert_equal "sending", @record.reload.status
+    assert_nil @record.error
+  end
+
+  test "enqueue failure does not remove a new message that has started delivery" do
+    record = OutboundMessage.new(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
+    queue_down = ->(id) do
+      OutboundMessage.where(id: id).update_all(status: "sending")
+      raise SolidQueue::Job::EnqueueError, "queue down"
+    end
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(record) }
+    end
+    assert_equal "sending", record.reload.status
+  end
+
+  test "enqueue stamping preserves a claim acquired by another delivery job" do
+    enqueue = OutboundDeliveryJob.method(:perform_later)
+    claimed_job = nil
+    during_enqueue = ->(id, &block) do
+      claimed_job = OutboundDeliveryJob.new(id)
+      claimed_job.stub(:record_sent, ->(*) { }) { claimed_job.perform_now }
+      enqueue.call(id, &block)
+    end
+    OutboundDeliveryJob.stub(:perform_later, during_enqueue) { Outbound::Send.call(@record) }
+    assert_equal "sending", @record.reload.status
+    assert_equal claimed_job.job_id, @record.delivery_job_id
+    assert_equal 1, @record.delivery_attempt
+    assert_no_difference("ActionMailer::Base.deliveries.size") do
+      perform_enqueued_jobs(only: OutboundDeliveryJob)
+    end
+  end
+
   test "unknown inactive and disabled sender domains are denied" do
     @record.from_address = "sender@example.net"
     assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(@record) }

@@ -1,7 +1,7 @@
 module Outbound
   class Send
     class NotAllowed < StandardError; end
-    # The delivery job could not be enqueued; the message is back to its state before the call.
+    # The delivery job could not be enqueued; undo the queued state unless delivery already started.
     class NotQueued < StandardError; end
 
     def self.call(outbound_message, actor: nil)
@@ -26,7 +26,18 @@ module Outbound
       end
       was_new = record.new_record?
       previous_status = record.status_in_database
-      record.update!(status: "queued", error: nil)
+      record.assign_attributes(status: "queued", error: nil)
+      if was_new
+        record.save!
+      else
+        record.validate!
+        # Keep pending edits and actor attribution in the same conditional update as the status.
+        attributes = record.changes.transform_values(&:last).merge(status: "queued", error: nil, updated_at: Time.current)
+        updated = OutboundMessage.where(id: record.id, status: previous_status).update_all(attributes)
+        raise NotAllowed, "message is no longer a draft" if updated == 0
+
+        record.reload
+      end
       enqueue_delivery(record, was_new:, previous_status:)
       record
     end
@@ -42,17 +53,26 @@ module Outbound
     # OutboundSweepJob re-enqueues those after a grace period, and the delivery job's claim makes
     # a duplicate job harmless if the original turns out to be only late.
     def self.enqueue_delivery(record, was_new:, previous_status:)
-      enqueue_error = nil
-      enqueued = OutboundDeliveryJob.perform_later(record.id) { |job| enqueue_error = job.enqueue_error }
-      raise enqueue_error || ActiveJob::EnqueueError.new("delivery job was not enqueued") unless enqueued
-    rescue StandardError => error
-      reason = "could not queue for delivery: #{error.class.name}"
-      if was_new
-        record.destroy!
-      else
-        record.update_columns(status: previous_status, error: reason)
+      begin
+        enqueue_error = nil
+        enqueued = OutboundDeliveryJob.perform_later(record.id) { |job| enqueue_error = job.enqueue_error }
+        raise enqueue_error || ActiveJob::EnqueueError.new("delivery job was not enqueued") unless enqueued
+      rescue StandardError => error
+        reason = "could not queue for delivery: #{error.class.name}"
+        queued = OutboundMessage.where(id: record.id, status: "queued")
+        if was_new
+          queued.delete_all
+        else
+          queued.update_all(status: previous_status, error: reason, updated_at: Time.current)
+        end
+        raise NotQueued, reason
       end
-      raise NotQueued, reason
+
+      # A worker may already have claimed the row. Never replace its job id with this enqueue's
+      # id, and never roll back a successful enqueue if recording it fails.
+      OutboundMessage.where(id: record.id, status: "queued", delivery_job_id: nil)
+        .update_all(delivery_job_id: enqueued.job_id, updated_at: Time.current)
+      record.reload
     end
     private_class_method :enqueue_delivery
   end
