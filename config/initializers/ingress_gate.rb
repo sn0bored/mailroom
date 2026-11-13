@@ -57,23 +57,28 @@ module Mailroom
       @app = app
     end
 
+    # The 404 for a public request that arrived on the internal listener says so, so an operator can tell
+    # from outside that the tunnel or proxy points at the wrong port. It grants nothing.
+    MISROUTED = "not found: a public request reached the internal listener\n".freeze
+
     def call(env)
       CLIENT_CHOSEN_ADDRESS.each { |key| env.delete(key) }
-      return @app.call(env) if internal?(env)
+      return @app.call(env) if Mailroom.trust_local?
+      on_internal = internal_listener?(env)
+      return @app.call(env) if on_internal && !forwarded_from_public?(env)
       case PUBLIC_ROUTES[[ env["REQUEST_METHOD"], env["PATH_INFO"] ]]
       when :open then @app.call(env)
       when :ingress then ingress_authorized?(env) ? @app.call(env) : unauthorized
-      else not_found
+      else not_found(on_internal ? MISROUTED : "not found\n")
       end
     end
 
     private
 
-    def internal?(env)
-      return true if Mailroom.trust_local?
+    def internal_listener?(env)
       internal = Mailroom.internal_port
       return false if internal.nil? || internal == Mailroom.public_port
-      self.class.listener_port(env) == internal && !forwarded_from_public?(env)
+      self.class.listener_port(env) == internal
     end
 
     def forwarded_from_public?(env)
@@ -92,7 +97,7 @@ module Mailroom
         ActiveSupport::SecurityUtils.secure_compare(given.to_s, password)
     end
 
-    def not_found = [ 404, { "content-type" => "text/plain" }, [ "not found\n" ] ]
+    def not_found(body) = [ 404, { "content-type" => "text/plain" }, [ body ] ]
 
     def unauthorized
       [ 401, { "content-type" => "text/plain", "www-authenticate" => 'Basic realm="Action Mailbox"' },

@@ -31,6 +31,11 @@ class IngressGateTest < ActionDispatch::IntegrationTest
     assert_equal "not found\n", response.body
   end
 
+  def assert_misrouted
+    assert_response :not_found
+    assert_equal Mailroom::IngressGate::MISROUTED, response.body
+  end
+
   test "the public listener serves exactly /up" do
     get "/up", env: Listeners.public
     assert_response :success
@@ -127,14 +132,28 @@ class IngressGateTest < ActionDispatch::IntegrationTest
   test "headers can take internal access away, never grant it" do
     { "Tailscale-Funnel-Request" => "?1", "X-Forwarded-For" => "203.0.113.9" }.each do |name, value|
       get "/session/new", headers: { name => value }
-      assert_gated
+      assert_misrouted
     end
     [ "100.101.102.103, 203.0.113.9", "198.51.100.7", "2001:db8::7", "not-an-address" ].each do |hops|
       get "/session/new", headers: { "X-Forwarded-For" => hops }
-      assert_gated
+      assert_misrouted
     end
+    post "/rails/action_mailbox/relay/inbound_emails", headers: { "Tailscale-Funnel-Request" => "?1" }
+    assert_misrouted
     get "/up", headers: { "Tailscale-Funnel-Request" => "?1" }
     assert_response :success
+    post Mailroom::POSTMARK_INGRESS_PATH, params: "{not json", headers: { "Content-Type" => "application/json", "Tailscale-Funnel-Request" => "?1" }
+    assert_response :unauthorized
+  end
+
+  test "the upgrade probe tells the public listener from a misrouted tunnel" do
+    post "/rails/action_mailbox/relay/inbound_emails", env: Listeners.public
+    assert_gated
+    post "/rails/action_mailbox/relay/inbound_emails", headers: { "Tailscale-Funnel-Request" => "?1" }
+    assert_misrouted
+    post "/rails/action_mailbox/relay/inbound_emails"
+    assert_response :not_found
+    assert_empty response.body, "an unmarked request on the internal listener reaches Action Mailbox"
   end
 
   test "requests through Tailscale Serve or another private path stay internal" do
