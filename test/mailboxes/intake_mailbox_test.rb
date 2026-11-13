@@ -376,7 +376,9 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert_equal 2, Message.count
     assert_equal "alice@sender.example.net", real.from_address
     assert_match(/forwarded by the registrar/, real.body_text)
-    assert_equal "skipped:duplicate_id", real.forward_status, "no second copy to the same place"
+    assert_equal "queued", real.forward_status, "different mail gets its own copy"
+    assert_enqueued_with(job: ForwardCopyJob, args: [ real.id ])
+    assert_includes real.routing_trace, { "header" => "same_message_id", "address" => "message:#{first.id}" }
     assert_equal "queued", first.reload.forward_status
     assert_not first.routing_trace.any? { |t| t["header"] == "duplicate" }
   end

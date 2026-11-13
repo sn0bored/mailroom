@@ -25,13 +25,15 @@ class IntakeMailbox < ApplicationMailbox
     message.routed_via = "loop" if loop? && !probe
     message.blocked = BlockedSender.blocks?(message.from_address)
     message.raw_body_digest = raw_body_digest
+    # Same Message-ID, different body: different mail, stored and forwarded as usual, with a note.
+    message.routing_trace = Array(message.routing_trace) + [ { "header" => "same_message_id", "address" => "message:#{same_id.first.id}" } ] if same_id.any?
     message.save!
     builder.attach_to(message)
 
     message.domain&.update!(last_received_at: Time.current)
     message.domain.update!(probe_received_at: Time.current) if probe
 
-    dispatch_forward_copy(message, probe: probe, repeated_id: same_id.any?)
+    dispatch_forward_copy(message, probe: probe)
   # SystemStackError is not a StandardError; left unrescued it strands the email in processing.
   rescue StandardError, SystemStackError => e
     store_fallback(e)
@@ -45,7 +47,7 @@ class IntakeMailbox < ApplicationMailbox
   #
   # Only a matching raw body makes one of them a duplicate to merge into. Message-IDs are chosen by
   # the sender, so one who copies a real ID and arrives first must not swallow the real message:
-  # same ID with a different body is stored too, minus a second forward copy to the same place.
+  # same ID with a different body is different mail, stored and forwarded like any other.
   def same_message_id_for_target(resolution)
     id = mail.message_id.presence or return []
     prior = Message.where(rfc822_message_id: id)
@@ -91,8 +93,8 @@ class IntakeMailbox < ApplicationMailbox
     token.present? && message.domain.probe_token.present? && token.casecmp?(message.domain.probe_token)
   end
 
-  def dispatch_forward_copy(message, probe:, repeated_id: false)
-    reason = forward_skip_reason(message, probe: probe, repeated_id: repeated_id)
+  def dispatch_forward_copy(message, probe:)
+    reason = forward_skip_reason(message, probe: probe)
     if reason
       message.update!(forward_status: "skipped:#{reason}")
       return
@@ -106,7 +108,7 @@ class IntakeMailbox < ApplicationMailbox
     end
   end
 
-  def forward_skip_reason(message, probe:, repeated_id: false)
+  def forward_skip_reason(message, probe:)
     return "blocked" if message.blocked?
     return "probe" if probe
     return "loop" if message.routed_via == "loop"
@@ -114,7 +116,6 @@ class IntakeMailbox < ApplicationMailbox
     return "no_target" if message.domain.forward_target.blank?
     return "forward_off" if message.domain.forward_mode == "off"
     return "not_listed" unless message.domain.forward_copy_for?(message)
-    return "duplicate_id" if repeated_id
     return "no_sender" if Mailroom.forward_sender.blank?
     return "no_provider" unless Mailroom.sending_configured?
     return "list" if message.list_mail
