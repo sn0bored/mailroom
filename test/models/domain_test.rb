@@ -49,6 +49,24 @@ class DomainTest < ActiveSupport::TestCase
     assert_includes domain.errors[:catch_all_mailbox], "can't also be where copies are forwarded"
   end
 
+  test "a catch-all mailbox can't also be the default forward target it would inherit" do
+    previous = ENV["MAILROOM_DEFAULT_FORWARD_TO"]
+    domain = Domain.new(name: "example.org", catch_all_mailbox: "info@example.org")
+    Setting.set("default_forward_to", "INFO@example.org")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mailbox], "can't also be where copies are forwarded"
+
+    domain.forward_copy_to = "owner@example.net"
+    assert domain.valid?, "its own target overrides the default"
+
+    Setting.set("default_forward_to", "")
+    domain.forward_copy_to = nil
+    ENV["MAILROOM_DEFAULT_FORWARD_TO"] = "info@example.org"
+    assert_not domain.valid?
+  ensure
+    ENV["MAILROOM_DEFAULT_FORWARD_TO"] = previous
+  end
+
   test "only active domains contribute catch-all mailboxes" do
     Domain.create!(name: "example.org", catch_all_mailbox: "info@example.org", catch_all_mx_host: "MX1.Mailhost.Example.NET.")
     Domain.create!(name: "example.net", catch_all_mailbox: "hello@example.net", active: false)

@@ -61,12 +61,12 @@ class Domain < ApplicationRecord
   private
 
   # A hosted mailbox that auto-forwards here must live on this domain, and must not also be where
-  # copies go: the copy would come straight back as a loop.
+  # copies go, whether set here or inherited from the default: the copy would come straight back.
   def catch_all_mailbox_on_this_domain
     local, host = catch_all_mailbox.split("@", 2)
     if local.blank? || host != name || catch_all_mailbox.match?(/\s/)
       errors.add(:catch_all_mailbox, "must be an address on this domain, such as info@#{name.presence || 'example.org'}")
-    elsif catch_all_mailbox.casecmp?(forward_copy_to.to_s.strip)
+    elsif catch_all_mailbox.casecmp?(forward_target.to_s.strip)
       errors.add(:catch_all_mailbox, "can't also be where copies are forwarded")
     end
   end
