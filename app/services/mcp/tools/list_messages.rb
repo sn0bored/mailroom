@@ -21,9 +21,9 @@ module Mcp
 
       def call
         messages = MessageQuery.new(args.slice(:domain, :unrouted, :unread, :archived, :q, :since, :before_id, :limit)).resolve.includes(:domain).to_a
-        body = messages.any? ? messages.map { |m| message_line(m) }.join("\n") : "(no messages)"
+        rows = messages.any? ? messages.map { |m| message_line(m) } : [ "(no messages)" ]
         audit("mcp.list_messages")
-        text_result(Frame.wrap(body, label: "list count=#{messages.size}"),
+        text_result(Frame.wrap(label: "list count=#{messages.size}", lines: rows),
                     { count: messages.size, messages: messages.map { |m| message_meta(m) } })
       end
     end
