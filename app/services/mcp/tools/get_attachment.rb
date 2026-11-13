@@ -27,10 +27,10 @@ module Mcp
         type = attachment.content_type.to_s.downcase
         label = "attachment=#{attachment.id} message=#{message.id}"
         if type.start_with?("text/") && attachment.byte_size <= TEXT_LIMIT
-          body = "Filename: #{field(attachment.filename)} | Type: #{field(type)}\n\n#{Frame.utf8(attachment.download)}"
-          text_result(Frame.wrap(body, label: label), meta)
+          text_result(Frame.wrap(Frame.utf8(attachment.download), label: label,
+                                 lines: [ "Filename: #{field(attachment.filename)} | Type: #{field(type)}" ]), meta)
         elsif type.start_with?("image/") && attachment.byte_size <= IMAGE_LIMIT && (image = verified_image(attachment, type))
-          head, tail = Frame.bracket("Filename: #{field(attachment.filename)} | Type: #{image[:type]}", label: label)
+          head, tail = Frame.bracket(label: label, lines: [ "Filename: #{field(attachment.filename)} | Type: #{image[:type]}" ])
           {
             content: [
               { type: "text", text: head },

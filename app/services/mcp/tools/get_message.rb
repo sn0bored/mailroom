@@ -19,17 +19,15 @@ module Mcp
         max_chars = integer_arg(:max_chars, default: 20_000, min: 1_000, max: 100_000)
         body = message.body_text.to_s
         truncated = body.length > max_chars
-        body = body.first(max_chars) + "\n[truncated #{message.body_text.to_s.length - max_chars} characters]" if truncated
         attachments = message.attachments.attached? ? message.attachments.map { |a| "attachment id=#{a.id} #{field(a.filename)} (#{a.byte_size} bytes, #{field(a.content_type)})" } : []
-        content = [
+        lines = [
           "From: #{field(message.display_from)} | To: #{field(message.to_address)} | Subject: #{field(message.subject)} | Date: #{message.sent_at&.utc&.iso8601 || message.received_at.utc.iso8601}",
           "Routed via: #{message.routed_via} | Domain: #{message.domain&.name || 'unrouted'} | Spam score: #{message.spam_score.inspect}",
-          attachments.presence&.join("\n"),
-          "",
-          body
-        ].compact.join("\n")
+          *attachments,
+          ("Body truncated: first #{max_chars} of #{body.length} characters" if truncated)
+        ].compact
         audit("mcp.get_message", target: message)
-        text_result(Frame.wrap(content, label: "id=#{message.id}"),
+        text_result(Frame.wrap(body.first(max_chars), label: "id=#{message.id}", lines: lines),
                     message_meta(message).merge(truncated: truncated,
                                                 attachment_ids: message.attachments.attached? ? message.attachments.map(&:id) : []))
       end
