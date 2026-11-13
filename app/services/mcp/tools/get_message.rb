@@ -20,9 +20,9 @@ module Mcp
         body = message.body_text.to_s
         truncated = body.length > max_chars
         body = body.first(max_chars) + "\n[truncated #{message.body_text.to_s.length - max_chars} characters]" if truncated
-        attachments = message.attachments.attached? ? message.attachments.map { |a| "attachment id=#{a.id} #{a.filename} (#{a.byte_size} bytes, #{a.content_type})" } : []
+        attachments = message.attachments.attached? ? message.attachments.map { |a| "attachment id=#{a.id} #{field(a.filename)} (#{a.byte_size} bytes, #{field(a.content_type)})" } : []
         content = [
-          "From: #{message.display_from} | To: #{message.to_address} | Subject: #{message.subject} | Date: #{message.sent_at&.utc&.iso8601 || message.received_at.utc.iso8601}",
+          "From: #{field(message.display_from)} | To: #{field(message.to_address)} | Subject: #{field(message.subject)} | Date: #{message.sent_at&.utc&.iso8601 || message.received_at.utc.iso8601}",
           "Routed via: #{message.routed_via} | Domain: #{message.domain&.name || 'unrouted'} | Spam score: #{message.spam_score.inspect}",
           attachments.presence&.join("\n"),
           "",
