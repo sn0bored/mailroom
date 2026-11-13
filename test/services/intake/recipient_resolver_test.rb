@@ -1,6 +1,48 @@
 require "test_helper"
 
 class Intake::RecipientResolverTest < ActiveSupport::TestCase
+  [
+    'from x (envelope-from <"a for <ceo@example.org>"@evil.test>)',
+    "from x (outer (by fake.example.net for <ceo@example.org>) comment)",
+    'from x "by fake.example.net for <ceo@example.org>"',
+    "from x for <ceo@example.org>"
+  ].each_with_index do |prefix, index|
+    test "Received ignores misleading clauses before by variant #{index}" do
+      source = "Delivered-To: info@example.org\nReceived: #{prefix} by mx.example.net id sample for careers@example.org;\n" \
+        "From: sender@example.net\nTo: info@example.org\nSubject: received\n\nbody"
+      [ {}, { "info@example.org" => "mx.example.net" }, { "info@example.org" => nil } ].each do |mailboxes|
+        result = Intake::RecipientResolver.call(Mail.new(source), owned_names: %w[example.org], catch_all_mailboxes: mailboxes)
+        assert_not_includes result.matches, "ceo@example.org"
+        assert_equal(mailboxes.empty? ? "info@example.org" : "careers@example.org", result.primary)
+      end
+    end
+  end
+
+  test "Received ignores escaped comments and strings after by" do
+    [
+      '(outer (escaped \\) for <ceo@example.org>) comment)',
+      '"escaped \\" for <ceo@example.org>"'
+    ].each do |decoy|
+      source = "Received: from sender.example.net by mx.example.net #{decoy} for <careers@example.org>;\n" \
+        "To: info@example.org\n\nbody"
+      result = Intake::RecipientResolver.call(Mail.new(source), owned_names: %w[example.org])
+      assert_equal "careers@example.org", result.primary
+      assert_not_includes result.matches, "ceo@example.org"
+    end
+  end
+
+  test "a by clause inside a comment or string cannot identify an MX hop" do
+    [ "(by mx.example.net)", '"by mx.example.net"' ].each do |decoy|
+      source = "Delivered-To: info@example.org\nReceived: from sender.example.net #{decoy} for <ceo@example.org>;\n" \
+        "To: info@example.org\n\nbody"
+      result = Intake::RecipientResolver.call(Mail.new(source), owned_names: %w[example.org],
+        catch_all_mailboxes: { "info@example.org" => "mx.example.net" })
+      assert_equal "info@example.org", result.primary
+      assert_not_includes result.matches, "ceo@example.org"
+      assert_includes result.trace, { "header" => "catch_all_mx_host_missing", "address" => "mx.example.net" }
+    end
+  end
+
   test "forwarded mail routes by the registrar's X-Original-To, ignoring the provider hash the ingress prepends" do
     raw = "X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source
     result = Intake::RecipientResolver.call(Mail.new(raw), owned_names: %w[example.org])
