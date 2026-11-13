@@ -10,7 +10,7 @@ module Mcp
         domains = Domain.order(:name).map do |d|
           {
             name: d.name, active: d.active, receiving: d.receiving?, send_enabled: d.send_enabled,
-            catch_all_mailbox: d.catch_all_mailbox,
+            catch_all_mailbox: d.catch_all_mailbox, catch_all_mx_host: d.catch_all_mx_host,
             last_received_at: d.last_received_at&.utc&.iso8601,
             unread: d.messages.inbox.unread.count, total: d.messages.count
           }

@@ -50,7 +50,7 @@ class DomainsController < ApplicationController
 
   def domain_params
     attributes = params.require(:domain).permit(:name, :forward_copy_to, :send_enabled,
-      :forward_copy_max_spam, :notes, :forward_mode, :forward_addresses, :catch_all_mailbox)
+      :forward_copy_max_spam, :notes, :forward_mode, :forward_addresses, :catch_all_mailbox, :catch_all_mx_host)
     if attributes.key?(:forward_addresses)
       attributes[:forward_addresses] = attributes[:forward_addresses].to_s.lines.map { |line| line.strip.downcase }.reject(&:blank?).uniq
     end

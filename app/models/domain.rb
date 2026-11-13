@@ -8,6 +8,7 @@ class Domain < ApplicationRecord
   before_validation do
     self.name = name.to_s.strip.downcase
     self.catch_all_mailbox = catch_all_mailbox.to_s.strip.downcase.presence
+    self.catch_all_mx_host = catch_all_mx_host.to_s.strip.downcase.chomp(".").presence
   end
   before_create { self.probe_token ||= SecureRandom.hex(8) }
 
@@ -16,11 +17,14 @@ class Domain < ApplicationRecord
   validates :forward_copy_max_spam, numericality: true
   validates :forward_mode, inclusion: { in: %w[all listed off] }
   validate :catch_all_mailbox_on_this_domain, if: :catch_all_mailbox
+  validates :catch_all_mx_host, format: { with: HOSTNAME, message: "must be a bare hostname such as mx1.example.net" }, allow_nil: true
+  validates :catch_all_mx_host, absence: { message: "needs a hosted catch-all mailbox" }, unless: :catch_all_mailbox
 
   scope :active, -> { where(active: true) }
 
   def self.owned_names = active.pluck(:name)
-  def self.catch_all_mailboxes = active.where.not(catch_all_mailbox: nil).pluck(:catch_all_mailbox)
+  # { mailbox => MX host or nil } for the resolver.
+  def self.catch_all_mailboxes = active.where.not(catch_all_mailbox: nil).pluck(:catch_all_mailbox, :catch_all_mx_host).to_h
 
   def self.for_address(address)
     host = address.to_s.split("@").last.to_s.downcase

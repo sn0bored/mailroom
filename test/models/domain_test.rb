@@ -50,9 +50,25 @@ class DomainTest < ActiveSupport::TestCase
   end
 
   test "only active domains contribute catch-all mailboxes" do
-    Domain.create!(name: "example.org", catch_all_mailbox: "info@example.org")
+    Domain.create!(name: "example.org", catch_all_mailbox: "info@example.org", catch_all_mx_host: "MX1.Mailhost.Example.NET.")
     Domain.create!(name: "example.net", catch_all_mailbox: "hello@example.net", active: false)
     Domain.create!(name: "example.com")
-    assert_equal [ "info@example.org" ], Domain.catch_all_mailboxes
+    Domain.create!(name: "example.edu", catch_all_mailbox: "info@example.edu")
+    assert_equal({ "info@example.org" => "mx1.mailhost.example.net", "info@example.edu" => nil }, Domain.catch_all_mailboxes)
+  end
+
+  test "an MX host must be a hostname and needs a catch-all mailbox" do
+    domain = Domain.new(name: "example.org", catch_all_mx_host: "mx1.example.net")
+    assert_not domain.valid?
+    assert_includes domain.errors[:catch_all_mx_host], "needs a hosted catch-all mailbox"
+    domain.catch_all_mailbox = "info@example.org"
+    assert domain.valid?
+    [ "mx1 example.net", "http://mx1.example.net", "localhost" ].each do |host|
+      domain.catch_all_mx_host = host
+      assert_not domain.valid?, host
+    end
+    domain.catch_all_mx_host = " "
+    assert domain.valid?
+    assert_nil domain.catch_all_mx_host
   end
 end

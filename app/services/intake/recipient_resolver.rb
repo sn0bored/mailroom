@@ -4,13 +4,17 @@ module Intake
   # With registrar catch-all forwarding the SMTP envelope recipient at the provider is the
   # provider's own inbound address, and the Rails Postmark ingress prepends that as
   # X-Original-To. The registrar's forwarder leaves its own X-Original-To and
-  # "Received: ... for <addr>" lines behind. So: collect every candidate, ignore the
-  # provider's address, keep only domains we own, prefer envelope-type headers over To/Cc.
+  # "Received: ... for <addr>" lines behind. So: ignore the provider's address, keep only domains
+  # we own, and prefer envelope-type headers over To/Cc.
+  #
+  # Envelope headers are read from the top of the message down. Every hop prepends, so the top was
+  # written last, by the hops nearest us; anything the sender wrote sits below the first hop that
+  # received it. The first owned envelope address from the top wins, so a Delivered-To the sender
+  # planted can't beat the ingress's or the forwarder's own headers and move mail to another domain.
   #
   # A domain that keeps a hosted catch-all mailbox and auto-forwards it here is different: the
   # host stamps that mailbox on everything (Delivered-To, its last Received hop), so every message
-  # first resolves to it. When a domain names that mailbox, look past it on the same domain,
-  # reading the trace from the top down so the host's hops count before anything the sender wrote.
+  # first resolves to it. When a domain names that mailbox, look past it on the same domain.
   class RecipientResolver
     ENVELOPE_HEADERS = %w[Delivered-To X-Original-To X-Forwarded-To Envelope-To X-Envelope-To].freeze
     ADDRESS_HEADERS = %w[To Cc Resent-To].freeze
@@ -23,102 +27,135 @@ module Intake
     RECEIVED_FOR = /\bfor\s+<?([^\s<>;,]+@[^\s<>;,]+)>?/i
     RECEIVED_FOR_LIST = /\bfor\s+((?:<?[^\s<>;,()@]+@[^\s<>;,()@]+>?[\s,]*)+)/i
     ADDRESS = /[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+    RECEIVED_BY = /(?:\A|[\s(])by\s+([^\s;()]+)/i
+    # A message to thousands of our addresses should not store thousands of matches.
+    MAX_MATCHES = 50
+    MAX_TRACE = 100
 
     Result = Struct.new(:primary, :routed_via, :matches, :trace, keyword_init: true) do
       def unrouted? = primary.nil?
     end
 
+    # catch_all_mailboxes: { mailbox => MX host or nil }, or a plain list of mailboxes.
     def self.call(mail, owned_names: Domain.owned_names, catch_all_mailboxes: Domain.catch_all_mailboxes)
       new(mail, owned_names, catch_all_mailboxes).call
     end
 
-    def initialize(mail, owned_names, catch_all_mailboxes = [])
+    def initialize(mail, owned_names, catch_all_mailboxes = {})
       @mail = mail
       @owned = owned_names.map { |n| n.to_s.downcase }
-      @catch_all_mailboxes = catch_all_mailboxes.map { |a| a.to_s.strip.downcase }
+      pairs = catch_all_mailboxes.is_a?(Hash) ? catch_all_mailboxes.to_a : catch_all_mailboxes.map { |mailbox| [ mailbox, nil ] }
+      @catch_all = pairs.to_h { |mailbox, host| [ mailbox.to_s.strip.downcase, host.to_s.strip.downcase.presence ] }
     end
 
     def call
       result = resolve
-      @catch_all_mailboxes.include?(result.primary) ? look_past_catch_all_mailbox(result) : result
+      @catch_all.key?(result.primary) ? look_past_catch_all_mailbox(result) : result
     end
 
     private
 
     def resolve
-      trace = []
-      envelope = []
-      ENVELOPE_HEADERS.each do |name|
-        header_values(name).each do |value|
-          extract(value).each { |address| trace << [ name, address ]; envelope << [ name, address ] }
+      envelope = fields_in_document_order.flat_map do |name, value|
+        if name.casecmp?("Received")
+          value.scan(RECEIVED_FOR).flatten.map { |address| [ "Received", address.downcase ] }
+        elsif (header = ENVELOPE_HEADERS.find { |known| known.casecmp?(name) })
+          extract(value).map { |address| [ header, address ] }
+        else
+          []
         end
       end
-      header_values("Received").each do |value|
-        value.scan(RECEIVED_FOR).flatten.each do |address|
-          address = address.downcase
-          trace << [ "Received", address ]
-          envelope << [ "Received", address ]
-        end
-      end
-      addressed = []
-      ADDRESS_HEADERS.each do |name|
-        header_values(name).each do |value|
-          extract(value).each { |address| trace << [ name, address ]; addressed << [ name, address ] }
-        end
-      end
+      addressed = ADDRESS_HEADERS.flat_map { |name| addresses_in(name) }
+      trace = as_hashes((envelope + addressed).first(MAX_TRACE))
 
       owned_envelope = envelope.select { |_, a| owned?(a) }
       owned_addressed = addressed.select { |_, a| owned?(a) }
-      matches = (owned_envelope + owned_addressed).map(&:last).uniq
+      matches = (owned_envelope + owned_addressed).map(&:last).uniq.first(MAX_MATCHES)
 
       if (hit = owned_envelope.first)
-        Result.new(primary: hit[1], routed_via: "hdr:#{hit[0]}", matches: matches, trace: as_hashes(trace))
+        Result.new(primary: hit[1], routed_via: "hdr:#{envelope_label(hit[1], owned_envelope)}", matches: matches, trace: trace)
       elsif (hit = owned_addressed.first)
-        Result.new(primary: hit[1], routed_via: "to:#{hit[0]}", matches: matches, trace: as_hashes(trace))
+        Result.new(primary: hit[1], routed_via: "to:#{hit[0]}", matches: matches, trace: trace)
       else
-        Result.new(primary: nil, routed_via: "unrouted", matches: [], trace: as_hashes(trace))
+        Result.new(primary: nil, routed_via: "unrouted", matches: [], trace: trace)
       end
+    end
+
+    # The address comes from position; the label names the most specific envelope header that
+    # carries it, so registrar mail still reads hdr:X-Original-To even when its forwarder's
+    # Received line sits above that header.
+    def envelope_label(address, owned_envelope)
+      ranked = ENVELOPE_HEADERS + [ "Received" ]
+      owned_envelope.select { |_, a| a == address }.map(&:first).min_by { |header| ranked.index(header) }
     end
 
     # Same domain only, so the domain decision never changes.
     #
-    # First the trace fields (original-recipient headers and single-recipient Received hops) in one
-    # scan from the top of the message down. Every hop prepends, so the top was written last, by the
-    # hops nearest us: Postmark, the redirect, the host's delivery, then the host's MX. Anything
-    # below the MX hop was written by the sender, so the host's genuine "for <careers@...>" is
-    # reached before a forged one. The mailbox is skipped here because the host writes it itself.
+    # First the trace fields (original-recipient headers and single-recipient Received hops), read
+    # from the top down, so the host's own hops count before anything the sender wrote below them.
+    # The mailbox is skipped there because the host writes it on everything itself. Then To, Cc,
+    # Resent-To, where the mailbox counts.
     #
-    # Then To, Cc, Resent-To, where the mailbox counts: mail visibly addressed to it stays with it.
+    # Without an MX host the scan cannot tell where the host's hops end, so it keeps reading below
+    # the MX hop. Two accepted residuals follow, both confined to the mailbox's own domain and no
+    # worse than a forged To: mail really sent to the mailbox can be relabelled by a trace header
+    # the sender planted below the MX hop, and so can mail whose MX hop names several recipients.
     #
-    # Accepted residual: when the MX hop names no single recipient (one transaction carried
-    # several), a trace header the sender planted below it can still win. That is no worse than a
-    # forged To, and it can never move the message to another domain.
+    # With the domain's MX host set, the topmost Received by that host is the MX hop and is final:
+    # its single "for" wins even when it names the mailbox, and nothing below it is read. If it
+    # names no single recipient, only the host-written fields above it count, then To/Cc. If no
+    # hop matches, or it names an address off this domain, the mailbox stays (fail closed).
     def look_past_catch_all_mailbox(result)
       mailbox = result.primary
       domain = domain_of(mailbox)
-      hit = trace_candidates.find { |_, address| domain_of(address) == domain && address != mailbox } ||
-            ADDRESS_HEADERS.flat_map { |name| addresses_in(name) }.find { |_, address| domain_of(address) == domain }
+      mx_host = @catch_all[mailbox]
+      fields = trace_fields
       trace = result.trace + [ { "header" => "catch_all_mailbox", "address" => mailbox } ]
-      return Result.new(**result.to_h.merge(trace: trace)) if hit.nil? || hit[1] == mailbox
 
-      header, address = hit
-      found = { "header" => header, "address" => address }
-      trace << found unless trace.include?(found)
-      Result.new(primary: address, routed_via: "catch-all:#{header}", matches: (result.matches + [ address ]).uniq, trace: trace)
+      if mx_host
+        mx_index = fields.index { |header, _, by_hosts| header == "Received" && by_hosts.any? { |host| host_matches?(host, mx_host) } }
+        if mx_index.nil?
+          return keep(result, trace + [ { "header" => "catch_all_mx_host_missing", "address" => mx_host } ])
+        end
+        mx_for = fields[mx_index][1]
+        if mx_for.size == 1
+          return keep(result, trace) unless domain_of(mx_for.first) == domain
+          return recovered(result, trace, "Received", mx_for.first) unless mx_for.first == mailbox
+          return keep(result, trace + [ { "header" => "Received", "address" => mailbox } ])
+        end
+        fields = fields.first(mx_index)
+      end
+
+      hit = fields.flat_map { |header, addresses, _| addresses.map { |address| [ header, address ] } }
+                  .find { |_, address| domain_of(address) == domain && address != mailbox } ||
+            ADDRESS_HEADERS.flat_map { |name| addresses_in(name) }.find { |_, address| domain_of(address) == domain }
+      return keep(result, trace) if hit.nil? || hit[1] == mailbox
+
+      recovered(result, trace, *hit)
     end
+
+    def keep(result, trace) = Result.new(**result.to_h.merge(trace: trace))
+
+    def recovered(result, trace, header, address)
+      found = { "header" => header, "address" => address }
+      trace += [ found ] unless trace.include?(found)
+      Result.new(primary: address, routed_via: "catch-all:#{header}",
+                 matches: (result.matches + [ address ]).uniq.first(MAX_MATCHES), trace: trace)
+    end
+
+    def host_matches?(host, mx_host) = host == mx_host || host.end_with?(".#{mx_host}")
 
     def addresses_in(name)
       header_values(name).flat_map { |value| extract(value).map { |address| [ name, address ] } }
     end
 
-    def trace_candidates
-      fields_in_document_order.flat_map do |name, value|
+    # [header, addresses, by-hosts] for each trace field, top down.
+    def trace_fields
+      fields_in_document_order.filter_map do |name, value|
         if name.casecmp?("Received")
-          received_for(value).map { |address| [ "Received", address ] }
+          [ "Received", received_for(value), value.scan(RECEIVED_BY).flatten.map { |host| host.downcase.chomp(".") } ]
         elsif (header = ORIGINAL_RECIPIENT_HEADERS.find { |known| known.casecmp?(name) })
-          extract(value).map { |address| [ header, address ] }
-        else
-          []
+          [ header, extract(value), [] ]
         end
       end
     end
@@ -126,14 +163,19 @@ module Intake
     # The Mail gem regroups fields by name, which loses which hop wrote what. Read the raw header
     # block instead, unfolding continuation lines. Stray 8-bit bytes are scrubbed, not fatal.
     def fields_in_document_order
-      raw = @mail.header.raw_source.to_s.dup.force_encoding(Encoding::UTF_8).scrub
-      return @mail.header.fields.map { |f| [ f.name.to_s, f.value.to_s ] } if raw.empty?
-      raw.split(/\r?\n(?![ \t])/).filter_map do |field|
-        name, value = field.split(":", 2)
-        [ name.strip, value.gsub(/\r?\n[ \t]+/, " ").strip ] if value
+      @fields_in_document_order ||= begin
+        raw = @mail.header.raw_source.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+        if raw.empty?
+          @mail.header.fields.map { |f| [ f.name.to_s, f.value.to_s ] }
+        else
+          raw.split(/\r?\n(?![ \t])/).filter_map do |field|
+            name, value = field.split(":", 2)
+            [ name.strip, value.gsub(/\r?\n[ \t]+/, " ").strip ] if value
+          end
+        end
+      rescue StandardError
+        []
       end
-    rescue StandardError
-      []
     end
 
     # The single recipient a Received hop names. A hop listing several recipients does not say

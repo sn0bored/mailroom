@@ -575,7 +575,12 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_response :unprocessable_entity
       assert_equal "info@example.org", @domain.reload.catch_all_mailbox
 
-      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "" } }
+      patch domain_path(@domain), params: { domain: { catch_all_mx_host: "MX1.Example.NET" } }
+      assert_equal "mx1.example.net", @domain.reload.catch_all_mx_host
+      follow_redirect!
+      assert_select "input[name='domain[catch_all_mx_host]'][value='mx1.example.net'][aria-describedby=catch-all-mx-host-help]"
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "", catch_all_mx_host: "" } }
       assert_nil @domain.reload.catch_all_mailbox
       follow_redirect!
       assert_select "#domain-forwarder", text: "*@example.org -> inbound@example.net"

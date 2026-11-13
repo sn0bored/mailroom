@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_13_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_13_100000) do
   create_table "action_mailbox_inbound_emails", force: :cascade do |t|
     t.integer "status", default: 0, null: false
     t.string "message_id", null: false
@@ -98,6 +98,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_13_090000) do
     t.string "forward_mode", default: "all", null: false
     t.json "forward_addresses"
     t.string "catch_all_mailbox"
+    t.string "catch_all_mx_host"
     t.index ["name"], name: "index_domains_on_name", unique: true
   end
 

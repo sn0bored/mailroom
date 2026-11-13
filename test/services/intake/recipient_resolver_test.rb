@@ -176,7 +176,8 @@ class Intake::RecipientResolverTest < ActiveSupport::TestCase
       source = hosted_source.sub("Delivered-To: info@example.org", "#{header}: <jobs@example.org>\nDelivered-To: info@example.org")
       result = resolve_hosted(source)
       assert_equal "jobs@example.org", result.primary, header
-      assert_equal "catch-all:#{header.sub('X-Delivered-to', 'X-Delivered-To')}", result.routed_via
+      # X-Original-To and Envelope-To are envelope headers, so the base scan already finds them.
+      assert_match(/\A(hdr|catch-all):#{Regexp.escape(header.sub('X-Delivered-to', 'X-Delivered-To'))}\z/, result.routed_via)
       assert_includes result.matches, "jobs@example.org"
     end
   end
@@ -190,7 +191,7 @@ class Intake::RecipientResolverTest < ActiveSupport::TestCase
 
   test "headers naming the forwarding mailbox or its destination are never the answer" do
     source = without_mx_for.sub("X-Sieve-Redirected-From: info@example.org", "X-Sieve-Redirected-From: admin@example.org\n" \
-      "X-Forwarded-For: admin@example.org abc123hash@inbound.postmarkapp.com\nX-Forwarded-To: owner@example.org")
+      "X-Forwarded-For: admin@example.org abc123hash@inbound.postmarkapp.com\nX-Forwarded-To: abc123hash@inbound.postmarkapp.com")
     source = source.sub("To: Careers Team <careers@example.org>", "To: partner@example.net").sub(/^Cc: .*\n/, "")
     result = resolve_hosted(source)
     assert_equal "info@example.org", result.primary
@@ -230,5 +231,111 @@ class Intake::RecipientResolverTest < ActiveSupport::TestCase
     result = resolve_hosted(source)
     assert_equal "press@example.org", result.primary
     assert_equal "catch-all:Received", result.routed_via
+  end
+
+  # Envelope headers are read from the top down: a header the sender planted below the hops that
+  # received the message can't beat them, so it can't move mail to another owned domain.
+  FORGED_DELIVERED_TO = "Delivered-To: boss@example.net\n".freeze
+
+  test "a forged Delivered-To below the registrar's headers does not pick the domain" do
+    source = "X-Original-To: abc123hash@inbound.postmarkapp.com\n" +
+      forwarded_source.sub("From: Alice Example", FORGED_DELIVERED_TO + "From: Alice Example")
+    result = Intake::RecipientResolver.call(Mail.new(source), owned_names: %w[example.org example.net])
+    assert_equal "hello@example.org", result.primary
+    assert_equal "hdr:X-Original-To", result.routed_via
+    assert_includes result.matches, "boss@example.net"
+  end
+
+  test "a forged Delivered-To loses to a registrar that writes only Received lines" do
+    source = forwarded_source.sub("X-Original-To: <hello@example.org>\n", "")
+                             .sub("From: Alice Example", FORGED_DELIVERED_TO + "From: Alice Example")
+    result = Intake::RecipientResolver.call(Mail.new("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source),
+      owned_names: %w[example.org example.net])
+    assert_equal "hello@example.org", result.primary
+    assert_equal "hdr:Received", result.routed_via
+  end
+
+  test "in mx mode the ingress's X-Original-To on top beats a forged Delivered-To" do
+    source = "X-Original-To: support@mail.example.org\n" + mx_source.sub("From: Bob Example", FORGED_DELIVERED_TO + "From: Bob Example")
+    result = Intake::RecipientResolver.call(Mail.new(source), owned_names: %w[mail.example.org example.net])
+    assert_equal "support@mail.example.org", result.primary
+    assert_equal "hdr:X-Original-To", result.routed_via
+  end
+
+  test "on the catch-all path a forged Delivered-To does not pick the domain when the host writes X-Original-To" do
+    source = hosted_source.sub("Delivered-To: info@example.org", "X-Original-To: careers@example.org")
+                          .sub("X-Spam-Status:", FORGED_DELIVERED_TO + "X-Spam-Status:")
+    result = resolve_hosted(source, owned: %w[example.org example.net])
+    assert_equal "careers@example.org", result.primary
+  end
+
+  test "matches and trace are capped for mail to thousands of addresses" do
+    to = (1..5000).map { |i| "u#{i}@example.org" }.join(", ")
+    mail = Mail.new("X-Original-To: abc123hash@inbound.postmarkapp.com\nFrom: a@sender.example.net\nTo: #{to}\nSubject: many\n\nx")
+    result = Intake::RecipientResolver.call(mail, owned_names: %w[example.org])
+    assert_equal "u1@example.org", result.primary
+    assert_equal Intake::RecipientResolver::MAX_MATCHES, result.matches.size
+    assert_equal Intake::RecipientResolver::MAX_TRACE, result.trace.size
+  end
+
+  # Mail really sent to the mailbox, with trace headers the sender planted below the host's MX hop.
+  def sent_to_mailbox_with_plants(plants)
+    hosted_source.sub(MX_FOR, "\tfor <info@example.org>; Fri, 13 Nov 2026 09:00:03 +0000 (UTC)")
+                 .sub("To: Careers Team <careers@example.org>", "To: info@example.org")
+                 .sub("X-Spam-Status:", plants + "X-Spam-Status:")
+  end
+
+  PLANTED_X_ORIGINAL_TO = "X-Original-To: ceo@example.org\n".freeze
+  PLANTED_RECEIVED = "Received: from fake by fake for <probe-deadbeef@example.org>; Fri, 13 Nov 2026 09:00:00 +0000\n".freeze
+  MX_HOST = { "info@example.org" => "mx1.mailhost.example.net" }.freeze
+
+  test "residual without an MX host: a header planted below the MX hop relabels mail sent to the mailbox" do
+    result = resolve_hosted(sent_to_mailbox_with_plants(PLANTED_X_ORIGINAL_TO))
+    assert_equal "ceo@example.org", result.primary, "documented as accepted; set the MX host to close it"
+  end
+
+  test "with the MX host set, its hop is final even when it names the mailbox" do
+    [ PLANTED_X_ORIGINAL_TO, PLANTED_RECEIVED ].each do |plant|
+      result = resolve_hosted(sent_to_mailbox_with_plants(plant), mailboxes: MX_HOST)
+      assert_equal "info@example.org", result.primary, plant
+      assert_equal "hdr:Delivered-To", result.routed_via
+      assert_includes result.trace, { "header" => "Received", "address" => "info@example.org" }
+    end
+  end
+
+  test "with the MX host set, its hop names the recipient and planted lines below it are ignored" do
+    source = hosted_source.sub("X-Spam-Status:", PLANTED_X_ORIGINAL_TO + PLANTED_RECEIVED + "X-Spam-Status:")
+    result = resolve_hosted(source, mailboxes: MX_HOST)
+    assert_equal "careers@example.org", result.primary
+    assert_equal "catch-all:Received", result.routed_via
+  end
+
+  test "with the MX host set and several recipients on its hop, only fields above it count, then To" do
+    source = without_mx_for.sub("To: Careers Team <careers@example.org>", "To: press@example.org, careers@example.org")
+                           .sub("X-Spam-Status:", PLANTED_X_ORIGINAL_TO + "X-Spam-Status:")
+    result = resolve_hosted(source, mailboxes: MX_HOST)
+    assert_equal "press@example.org", result.primary
+    assert_equal "catch-all:To", result.routed_via
+
+    above = source.sub("Delivered-To: info@example.org", "X-Delivered-To: jobs@example.org\nDelivered-To: info@example.org")
+    assert_equal "jobs@example.org", resolve_hosted(above, mailboxes: MX_HOST).primary
+  end
+
+  test "with the MX host set but no hop by it, the mailbox stays and the trace says why" do
+    result = resolve_hosted(mailboxes: { "info@example.org" => "mx9.elsewhere.example.net" })
+    assert_equal "info@example.org", result.primary
+    assert_includes result.trace, { "header" => "catch_all_mx_host_missing", "address" => "mx9.elsewhere.example.net" }
+  end
+
+  test "an MX host that also names the host's outbound hop fails closed" do
+    # mailhost.example.net matches the redirect's outbound hop first, whose for is the inbound address.
+    result = resolve_hosted(mailboxes: { "info@example.org" => "mailhost.example.net" })
+    assert_equal "info@example.org", result.primary
+    assert_equal "hdr:Delivered-To", result.routed_via
+  end
+
+  test "an MX host matches by label, not by bare suffix" do
+    result = resolve_hosted(mailboxes: { "info@example.org" => "x1.mailhost.example.net" })
+    assert_includes result.trace, { "header" => "catch_all_mx_host_missing", "address" => "x1.mailhost.example.net" }
   end
 end

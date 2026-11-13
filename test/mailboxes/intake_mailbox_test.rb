@@ -139,7 +139,9 @@ class IntakeMailboxTest < ActiveSupport::TestCase
   test "a copy to a second owned domain with a distinct forward target is not dropped as a duplicate" do
     other = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
     first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    # The registrar's copy for example.com names example.com in its Received lines too.
     second_source = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+                                    .gsub("for <hello@example.org>", "for <hi@example.com>")
     second = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + second_source)
 
     assert_equal @domain, first.domain
@@ -155,6 +157,7 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     org_domain = @domain
     com_domain = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
     to_com = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+                             .gsub("for <hello@example.org>", "for <hi@example.com>")
 
     org = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
     com = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + to_com)
@@ -299,5 +302,23 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
     assert_equal "careers@example.org", message.to_address
     assert_equal "catch-all:Received", message.routed_via
+  end
+
+  test "with the mail host's MX server set, mail sent to the mailbox stays with it despite planted headers" do
+    @domain.update!(catch_all_mailbox: "info@example.org", catch_all_mx_host: "mx1.mailhost.example.net")
+    source = hosted_source.sub("for <careers@example.org>", "for <info@example.org>")
+                          .sub("To: Careers Team <careers@example.org>", "To: info@example.org")
+                          .sub("X-Spam-Status:", "X-Original-To: ceo@example.org\nX-Spam-Status:")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal "info@example.org", message.to_address
+    assert_equal "hdr:Delivered-To", message.routed_via
+  end
+
+  test "a forged Delivered-To does not move registrar mail to another owned domain" do
+    Domain.create!(name: "example.net", forward_copy_to: "client@example.net")
+    source = forwarded_source.sub("From: Alice Example", "Delivered-To: boss@example.net\nFrom: Alice Example")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal @domain, message.domain
+    assert_equal "hello@example.org", message.to_address
   end
 end
