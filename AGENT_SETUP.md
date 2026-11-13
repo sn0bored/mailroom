@@ -106,7 +106,10 @@ may print a consent link; the owner clicks it.
 
 **Reverse proxy:** proxy `https://<host>/` to `127.0.0.1:3101` only. The owner reaches 3100 privately,
 over Tailscale Serve or an SSH tunnel (the tunnel works for MCP and the API; the web inbox needs HTTPS).
-Check: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/session/new` prints 404.
+
+**Check either way:** `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/session/new` prints
+404, and `curl -s -X POST https://<public-host>/rails/action_mailbox/relay/inbound_emails` prints exactly
+`not found`. Any other reply means the public side points at 3100; fix that before going on.
 
 ### 7. Point Postmark at it
 

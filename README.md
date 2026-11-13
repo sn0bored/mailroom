@@ -66,8 +66,12 @@ bin/mailroom-server
 | internal | `MAILROOM_PORT` (3100) | inbox, MCP, API | a private path only: your tailnet, or an SSH tunnel |
 | public | `MAILROOM_PUBLIC_PORT` (e.g. 3101) | the Postmark webhook and `/up` | the public tunnel or reverse proxy |
 
-Mailroom decides what a request may reach by the listener it arrived on, never by its headers. Never
-point anything public at the internal port. Production refuses to start without `MAILROOM_PUBLIC_PORT`.
+Only a connection accepted on `127.0.0.1` at the internal port reaches the inbox, MCP or API. No header
+can grant that. Headers can only take it away: a request Funnel forwarded, or one whose nearest
+`X-Forwarded-For` hop is a public address, is treated as public even on the internal port. In production
+Mailroom refuses to start unless Puma listens on exactly these two loopback ports, so start it with
+`bin/mailroom-server`, not `rails server`, `PORT=` or Thruster. Never point anything public at the
+internal port.
 
 - **Mac mini + Tailscale (what this was built on):** `tailscale serve --bg --https=8443 http://127.0.0.1:3100`
   for the inbox, MCP and API (tailnet only), and
@@ -78,25 +82,32 @@ point anything public at the internal port. Production refuses to start without 
   port only (Caddy: `mail.example.org { reverse_proxy 127.0.0.1:3101 }`). Reach the internal port privately:
   Tailscale Serve as above, or an SSH tunnel (`ssh -N -L 3100:127.0.0.1:3100 you@server`). The tunnel is
   enough for MCP and the API; signing in to the web inbox needs HTTPS in front, so use Serve for that.
-  The committed Kamal config is only a starting point: in a container both listeners sit on the
-  container's loopback, so it needs work before the proxy can reach the public one.
+- **Containers** are not a supported recipe yet: inside a container both listeners sit on the
+  container's loopback. Whatever you run, only the public listener may ever face a proxy.
 
 ### Upgrading from a single listener
 
 Earlier versions ran one listener and trusted request headers to tell the private side from the public
-one. To upgrade a Tailscale install:
+one. Do these in order. Moving the tunnel before the new code runs means the webhook fails for a few
+minutes, and Postmark retries it; the other order would briefly put the whole app behind the tunnel.
 
-1. Add `MAILROOM_PUBLIC_PORT=3101` to `~/.mailroom/env` (any free port other than `MAILROOM_PORT`), and
-   remove `MAILROOM_TRUST_LOCAL` if it is set.
-2. Pull and restart the server (`launchctl kickstart -k gui/$(id -u)/com.mailroom.server`). The launchd
-   template is unchanged. Until the next step the webhook still reaches the internal port, so no mail is lost.
-3. Point Funnel at the public port:
+1. Before pulling anything, add `MAILROOM_PUBLIC_PORT=3101` to `~/.mailroom/env` (any free port other
+   than `MAILROOM_PORT`). Every production task, `db:prepare` included, refuses to start without it.
+   Make sure `RAILS_INBOUND_EMAIL_PASSWORD` is at least 32 characters, and remove
+   `MAILROOM_TRUST_LOCAL` if it is set to 1.
+2. Point the public side at the new port, and leave the private side alone:
    `tailscale funnel --bg --https=443 --set-path=/rails/action_mailbox http://127.0.0.1:3101/rails/action_mailbox`.
-   Leave Serve on 8443 → 3100 as it is. Check with `tailscale funnel status`.
-4. `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/session/new` prints 404, and the same
-   on 3100 prints 200.
-
-With a reverse proxy instead of Funnel, step 3 is: change its upstream to `127.0.0.1:3101`.
+   Serve stays on 8443 → 3100. Check with `tailscale funnel status`. With a reverse proxy, change its
+   upstream to `127.0.0.1:3101` and reload it.
+3. Pull, `bundle install`, `bin/mailroom-task db:prepare`, `bin/mailroom-task assets:precompile`, and
+   restart (`launchctl kickstart -k gui/$(id -u)/com.mailroom.server`); `bin/deploy-mini` does all of
+   this. The launchd template is unchanged. The server log should show two `Listening on` lines.
+4. Check locally: `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3101/session/new` prints 404,
+   and the same on 3100 prints 200.
+5. Check through the public URL: `curl -s -X POST https://<public-host>/rails/action_mailbox/relay/inbound_emails`
+   prints `not found`. Anything else means the tunnel or proxy still points at 3100: a longer
+   "not found: a public request reached the internal listener", or an empty reply.
+6. If Postmark gave up on any message during the switch, `bin/mailroom-task mailroom:postmark:retry_failed`.
 
 Postmark retries a failing webhook for about ten hours. `mailroom:postmark:retry_failed` asks it to
 retry anything older; run it hourly (template included) and after any outage.

@@ -16,13 +16,21 @@ message is hostile until a human says otherwise.
 - **Ingress authentication.** The Postmark webhook requires HTTP basic auth
   (`actionmailbox:$RAILS_INBOUND_EMAIL_PASSWORD`); the app refuses to boot in production without it.
 - **Public-side gate.** Mailroom runs two loopback listeners: an internal one for the inbox, MCP and API,
-  and a public one for the webhook. A middleware decides by the listener that accepted the connection,
-  never by Host, `X-Forwarded-*`, `Forwarded` or Tailscale headers. On the public listener only
-  `GET /up` and `POST` to the Postmark webhook path get through; everything else is a 404. Production
-  refuses to start without a separate public port. Every other route needs a session or a key as well.
+  and a public one for the webhook. A middleware lets a request through to the whole app only when its
+  connection was accepted on a loopback address at the internal port. No header can grant that; a
+  request Tailscale Funnel forwarded, or whose nearest `X-Forwarded-For` hop is a public address, gets
+  the public rules even there. The public rules allow `GET /up`, and `POST` to the Postmark webhook path
+  with the ingress password, which the middleware checks before Rails parses or logs the body.
+  Everything else is a 404. `Client-IP` and `Forwarded` headers are dropped, so no client chooses the
+  address Rails logs and rate-limits by. Every other route needs a session or a key as well.
+- **Boot checks.** Production refuses to start unless Puma listens on exactly the two loopback ports
+  (`rails server -p`, `PORT` or Thruster would replace them with one listener on every interface),
+  without a separate public port, or with an ingress password under 32 characters. Request bodies over
+  100 MB get a 413 from Puma before the app runs.
 - **Nothing rendered from mail.** The web inbox shows text bodies only, escaped. Attachments download
   through an authenticated controller with `Content-Disposition: attachment`; blob URLs are never exposed.
-- **Logs.** Raw payloads, tokens, passwords and mail bodies are filtered from the Rails log. The webhook
+- **Logs.** Raw payloads, tokens, passwords, and mail bodies, subjects and addresses are filtered from
+  the Rails log. The webhook
   URL, which embeds the ingress password, is never printed.
 - **Throttling.** Logins, agent and API traffic, and sends are rate limited.
 - **Data at rest.** SQLite and a storage directory you own. Back them up; encrypt the disk.
