@@ -40,6 +40,10 @@ module Mailroom
 
     # Mail is untrusted input; keep bodies and raw payloads out of the logs.
     config.filter_parameters += %i[RawEmail Content token password text_body html_body]
+    # Partial, case-insensitive matches: Postmark's inbound fields (TextBody, HtmlBody, StrippedTextReply,
+    # Subject, From, FromName, To, Cc, Bcc, Headers, Attachments, OriginalRecipient) and the send API's
+    # from, to, subject, text and html. Logs only; the params themselves are untouched.
+    config.filter_parameters += %i[body subject reply from to cc bcc headers attachments recipient text html]
 
     # Throttling for logins, API traffic and sends.
     config.middleware.use Rack::Attack
