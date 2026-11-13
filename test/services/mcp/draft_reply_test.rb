@@ -36,7 +36,8 @@ class DraftReplyTest < ActiveSupport::TestCase
     assert_not_includes outgoing.destinations, "competitor@example.net"
 
     assert_includes text, "Reply-all left off 2 recipient(s)"
-    assert_match(/UNTRUSTED_EMAIL nonce=\h+ left_off_recipients message_id=#{message.id}>>>\njournalist@example.com\ncompetitor@example.net\n/, text)
+    # The frame may prefix each line of email text (e.g. "│ "); the addresses stay inside the block either way.
+    assert_match(/UNTRUSTED_EMAIL nonce=\h+ left_off_recipients message_id=#{message.id}>>>\n(?:│ )?journalist@example.com\n(?:│ )?competitor@example.net\n/, text)
     assert_includes text, "Reply-To address, which differs from its sender"
     assert_equal 2, result.dig(:structuredContent, :left_off_recipients)
   end
