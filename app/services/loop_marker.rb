@@ -5,14 +5,6 @@
 module LoopMarker
   HEADER = "X-Mailroom-Loop"
 
-  # A Message-ID we choose ourselves, so the marker can be computed before delivery.
-  def self.message_id_for(from_address)
-    domain = Mail::Address.new(from_address.to_s).domain.presence
-    "<#{SecureRandom.uuid}@#{domain || 'mailroom.invalid'}>"
-  rescue Mail::Field::ParseError
-    "<#{SecureRandom.uuid}@mailroom.invalid>"
-  end
-
   def self.stamp(message_id)
     OpenSSL::HMAC.hexdigest("SHA256", key, normalize(message_id))
   end
