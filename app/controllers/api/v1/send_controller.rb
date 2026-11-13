@@ -5,8 +5,8 @@ module Api
 
       # Nothing is stored until the message is valid and Outbound::Send accepts it, so a refused
       # request leaves no row behind and a retry with the same idempotency key is judged again.
-      # Accepted requests are stored as queued, and replaying their key returns that record. The
-      # record is built as queued because an API send never exists as a draft.
+      # Requests are stored as queued; replay is accepted once enqueueing has succeeded. The record
+      # is built as queued because an API send never exists as a draft.
       def create
         key = params[:idempotency_key]
         if key.is_a?(ActionController::Parameters) || key.is_a?(Array)
@@ -26,7 +26,7 @@ module Api
         Audit.record("api.send", actor: current_api_key, target: record, ip: request.remote_ip)
         render_record(record)
       rescue ActiveRecord::RecordNotUnique
-        # A concurrent request with the same key was accepted first.
+        # A concurrent request stored the same key first; it may still be enqueueing.
         raise unless key && (existing = own_sends.find_by(idempotency_key: key))
         render_record(existing, replay: true)
       end
@@ -44,6 +44,10 @@ module Api
       def own_sends = current_api_key.outbound_messages.where(kind: "api")
 
       def render_record(record, replay: false)
+        if replay && record.status == "queued" && record.delivery_job_id.nil?
+          return render json: { error: "in_progress" }, status: :conflict
+        end
+
         result = message_json(record)
         result[:idempotent] = true if replay
         render json: result, status: replay ? :ok : :accepted

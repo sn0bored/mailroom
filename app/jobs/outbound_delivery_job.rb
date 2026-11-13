@@ -2,10 +2,11 @@
 #
 # Delivery semantics:
 # - A job delivers only after it claims the row: one conditional UPDATE moves it from queued to
-#   sending and stamps this job's id on it. A duplicate job for the same row (a second enqueue, or
-#   OutboundSweepJob re-enqueueing a row whose job looked lost) finds nothing to claim and stops.
+#   sending and stamps this job's id and execution count on it. A duplicate job for the same row
+#   (a second enqueue, or a sweep re-enqueueing a row whose job looked lost) cannot claim it and stops.
 # - A transport error retries this same job under the same job id, and the claim lets that job,
-#   and no other, take its own sending row again.
+#   and no other, take its own sending row again only with a higher execution count. Redispatching
+#   the same execution after a worker shutdown cannot deliver again.
 # - Delivery is therefore at-least-once on transport retries: if the provider accepted the message
 #   but the response was lost (a timeout), the retry sends it a second time.
 # - Once deliver_now returns, the provider has the message. It is recorded as sent before anything
@@ -38,12 +39,17 @@ class OutboundDeliveryJob < ApplicationJob
   private
 
   # Returns the record when this job holds the claim, nil when the row is gone, finished, or
-  # claimed by another job.
+  # claimed by another job or the same execution. Legacy claims with no recorded attempt cannot
+  # be safely retried; the sweep will report their outcome as unknown if they never finish.
   def claim(id)
     claimable = OutboundMessage.where(id: id, status: "queued")
-      .or(OutboundMessage.where(id: id, status: "sending", delivery_job_id: job_id))
-    claimed = claimable.update_all(status: "sending", delivery_job_id: job_id, updated_at: Time.current)
-    OutboundMessage.find(id) if claimed == 1
+      .or(OutboundMessage.where(id: id, status: "sending", delivery_job_id: job_id).where("delivery_attempt < ?", executions))
+    claimed = claimable.update_all(status: "sending", delivery_job_id: job_id,
+      delivery_attempt: executions, updated_at: Time.current)
+    return OutboundMessage.find(id) if claimed == 1
+
+    Rails.logger.info("OutboundDeliveryJob: skipped message #{id} for job #{job_id} execution #{executions}; no claim available")
+    nil
   end
 
   def record_sent(record, delivery)

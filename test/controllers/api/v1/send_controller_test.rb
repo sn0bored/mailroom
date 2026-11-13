@@ -84,6 +84,61 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
     assert_equal true, response.parsed_body["idempotent"]
   end
 
+  test "a replay during a failing enqueue reports in progress" do
+    replay = open_session
+    payload = @payload.merge(idempotency_key: "pending-one")
+    queue_down = ->(*) do
+      replay.post "/api/v1/send", params: payload,
+        headers: { "Authorization" => "Bearer #{@token}" }, as: :json
+      raise SolidQueue::Job::EnqueueError, "queue down"
+    end
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      with_rendered_exceptions do
+        assert_no_difference("OutboundMessage.count") { send_request(payload) }
+      end
+    end
+    assert_response :internal_server_error
+    assert_equal 409, replay.response.status
+    assert_equal({ "error" => "in_progress" }, replay.response.parsed_body)
+    assert_no_enqueued_jobs
+  end
+
+  test "a replay is in progress before enqueue returns and idempotent after the stamp" do
+    replay = open_session
+    payload = @payload.merge(idempotency_key: "pending-one")
+    enqueue = OutboundDeliveryJob.method(:perform_later)
+    during_enqueue = ->(*args, &block) do
+      replay.post "/api/v1/send", params: payload,
+        headers: { "Authorization" => "Bearer #{@token}" }, as: :json
+      enqueue.call(*args, &block)
+    end
+    OutboundDeliveryJob.stub(:perform_later, during_enqueue) do
+      assert_enqueued_jobs(1, only: OutboundDeliveryJob) { send_request(payload) }
+    end
+    assert_response :accepted
+    assert_equal 409, replay.response.status
+    assert_equal({ "error" => "in_progress" }, replay.response.parsed_body)
+    record = OutboundMessage.find(response.parsed_body["id"])
+    assert_equal enqueued_jobs.last["job_id"], record.delivery_job_id
+
+    assert_no_enqueued_jobs { send_request(payload) }
+    assert_response :ok
+    assert_equal record.id, response.parsed_body["id"]
+    assert_equal true, response.parsed_body["idempotent"]
+  end
+
+  test "a concurrent key insertion is in progress until its enqueue is stamped" do
+    race = ->(record, actor:) do
+      record.dup.save!
+      record.save!
+    end
+    Outbound::Send.stub(:call, race) do
+      assert_no_enqueued_jobs { send_request(@payload.merge(idempotency_key: "racing-one")) }
+    end
+    assert_response :conflict
+    assert_equal({ "error" => "in_progress" }, response.parsed_body)
+  end
+
   test "a refused send leaves no row and no job" do
     @domain.update!(send_enabled: false)
     assert_no_difference "OutboundMessage.count" do

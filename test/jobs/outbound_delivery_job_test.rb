@@ -100,6 +100,36 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
     @record.reload
     assert_equal "sent", @record.status
     assert_equal job.job_id, @record.delivery_job_id
+    assert_equal 2, @record.delivery_attempt
+  end
+
+  test "redispatching the same serialized execution does not deliver again" do
+    job = OutboundDeliveryJob.new(@record.id)
+    serialized = job.serialize
+    # The provider accepts the message, but the worker stops before recording the outcome.
+    job.stub(:record_sent, ->(*) { }) { job.perform_now }
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal "sending", @record.reload.status
+
+    replay = OutboundDeliveryJob.deserialize(serialized)
+    messages = []
+    Rails.logger.stub(:info, ->(message) { messages << message }) do
+      assert_no_difference("ActionMailer::Base.deliveries.size") { replay.perform_now }
+    end
+    assert_equal job.job_id, replay.job_id
+    assert_equal job.executions, replay.executions
+    assert_equal "sending", @record.reload.status
+    assert_equal 1, @record.delivery_attempt
+    assert messages.compact.any? { |message| message.include?("OutboundDeliveryJob: skipped message") }
+  end
+
+  test "a legacy sending claim without an attempt cannot be redispatched" do
+    job = OutboundDeliveryJob.new(@record.id)
+    @record.update!(status: "sending", delivery_job_id: job.job_id)
+    job.perform_now
+    assert_empty ActionMailer::Base.deliveries
+    assert_equal "sending", @record.reload.status
+    assert_nil @record.delivery_attempt
   end
 
   test "another job cannot take over a row that is being delivered" do
