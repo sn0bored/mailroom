@@ -344,6 +344,18 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", new_draft_path(message_id: message.id)
   end
 
+  test "owner pages send a strict content security policy with a nonce for the importmap" do
+    get messages_path
+    policy = response.headers["Content-Security-Policy"]
+    [ "default-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'",
+      "img-src 'self' data:" ].each { |directive| assert_includes policy, directive }
+    assert_no_match(/unsafe-inline|unsafe-eval|\*/, policy)
+    nonce = policy[/script-src 'self' 'nonce-([^']+)'/, 1]
+    assert nonce.present?
+    assert_select "script[type=importmap][nonce=?]", nonce
+    assert_select "meta[name=csp-nonce][content=?]", nonce
+  end
+
   test "unavailable raw source has a readable fallback" do
     message = create_message
     message.stub(:raw_source, -> { raise IOError }) do

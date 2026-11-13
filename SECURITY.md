@@ -20,6 +20,8 @@ message is hostile until a human says otherwise.
   host, or a forwarded tailnet client address). Every other route needs a session or a key as well.
 - **Nothing rendered from mail.** The web inbox shows text bodies only, escaped. Attachments download
   through an authenticated controller with `Content-Disposition: attachment`; blob URLs are never exposed.
+  The owner UI sends a strict Content-Security-Policy (`default-src 'self'`, nonce-only inline code,
+  `object-src 'none'`, `frame-ancestors 'none'`).
 - **Logs.** Raw payloads, tokens, passwords and mail bodies are filtered from the Rails log. The webhook
   URL, which embeds the ingress password, is never printed.
 - **Throttling.** Logins, agent and API traffic, and sends are rate limited.
