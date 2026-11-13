@@ -28,6 +28,11 @@ module Mailroom
     # Addresses a private path may forward for: loopback, RFC 1918, link-local, IPv6 ULA (which holds
     # the Tailscale range fd7a:115c:a1e0::/48) and Tailscale's 100.64.0.0/10.
     CGNAT = IPAddr.new("100.64.0.0/10").freeze
+    # Tailscale and the usual reverse proxies send X-Forwarded-For, never these, so only a client would.
+    # They are dropped so no client picks the address Rails logs, audits and rate-limits by (Rack prefers
+    # Forwarded over X-Forwarded-For), and so Client-IP disagreeing with X-Forwarded-For cannot trip
+    # Rails' IP spoofing check, which raises in the request logger, outside the error pages: a bare 500.
+    CLIENT_CHOSEN_ADDRESS = %w[HTTP_CLIENT_IP HTTP_FORWARDED].freeze
 
     # The port the request's connection was accepted on, when that was a loopback address; else nil.
     def self.listener_port(env)
@@ -53,6 +58,7 @@ module Mailroom
     end
 
     def call(env)
+      CLIENT_CHOSEN_ADDRESS.each { |key| env.delete(key) }
       return @app.call(env) if internal?(env)
       case PUBLIC_ROUTES[[ env["REQUEST_METHOD"], env["PATH_INFO"] ]]
       when :open then @app.call(env)

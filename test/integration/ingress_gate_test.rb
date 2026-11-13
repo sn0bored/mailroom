@@ -196,6 +196,22 @@ class IngressGateTest < ActionDispatch::IntegrationTest
     listener&.close
   end
 
+  test "Client-IP and Forwarded never reach the app" do
+    Domain.create!(name: "example.org")
+    # Client-IP disagreeing with X-Forwarded-For used to raise IpSpoofAttackError in the request logger.
+    post Mailroom::POSTMARK_INGRESS_PATH, params: JSON.parse(file_fixture("postmark_inbound.json").read), as: :json,
+         headers: { "Authorization" => ActionController::HttpAuthentication::Basic.encode_credentials("actionmailbox", "test-ingress-password"),
+                    "Client-Ip" => "198.51.100.1", "X-Forwarded-For" => "203.0.113.5", "Forwarded" => "for=192.0.2.9" },
+         env: Listeners.public
+    assert_response :no_content
+
+    seen = nil
+    gate = Mailroom::IngressGate.new(->(env) { seen = env; [ 200, {}, [] ] })
+    gate.call(Listeners.internal.merge("REQUEST_METHOD" => "GET", "PATH_INFO" => "/", "HTTP_CLIENT_IP" => "198.51.100.1",
+                                       "HTTP_FORWARDED" => "for=192.0.2.9", "HTTP_X_FORWARDED_FOR" => "10.0.0.2"))
+    assert_equal [ "HTTP_X_FORWARDED_FOR" ], seen.keys.grep(/CLIENT_IP|FORWARDED/)
+  end
+
   test "the public ingress path is Action Mailbox's Postmark route" do
     assert_equal Rails.application.routes.url_helpers.rails_postmark_inbound_emails_path, Mailroom::POSTMARK_INGRESS_PATH
     assert Mailroom::POSTMARK_INGRESS_PATH.start_with?(Mailroom::INGRESS_PATH_PREFIX)
