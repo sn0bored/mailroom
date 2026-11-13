@@ -30,8 +30,9 @@ message is hostile until a human says otherwise.
 ## What is not in place
 
 - Mail is not scanned for malware. Attachments are stored as received.
-- Spam scoring comes from the provider (`X-Spam-Score`). Mailroom only uses it to decide whether to
-  forward a copy; nothing is dropped.
+- Spam scoring comes from the provider. The ingress copies Postmark's score into
+  `X-Mailroom-Spam-Score` at the top of the stored message, and a sender's own `X-Spam-Score` never
+  overrides it. Mailroom only uses the score to decide whether to forward a copy; nothing is dropped.
 - There is one owner account and no roles.
 
 ## Reporting
