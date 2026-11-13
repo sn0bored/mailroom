@@ -76,6 +76,15 @@ class ForwardMailerTest < ActiveSupport::TestCase
     assert_includes passed.html_part.decoded, "Sender check: verified (DMARC pass, SPF pass, DKIM pass)"
   end
 
+  test "legitimate forwarded mail is unknown, not tagged, when only the forwarder's SPF is known" do
+    forwarded = "Received-SPF: Pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.30; " \
+      "envelope-from=SRS0=Ab1c=XY=payments.example.com=service@forwarder.example.net\n" \
+      "X-Spam-Tests: DKIM_SIGNED,DKIM_VALID,SPF_PASS\n"
+    copy = copy_of(receive(provider_headers: forwarded))
+    assert_equal "[example.org] Account locked", copy.subject
+    assert_includes copy.html_part.decoded, "Sender check: unknown (DMARC none, SPF none, DKIM none)"
+  end
+
   test "no provider signals means no verdict line and no tag" do
     copy = copy_of(receive)
     assert_equal "[example.org] Account locked", copy.subject

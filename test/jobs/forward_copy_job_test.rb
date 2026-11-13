@@ -85,8 +85,8 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     Mailroom.stub(:forward_sender, "forward@example.org") { ForwardCopyJob.perform_now(@record.id) }
     delivery = ActionMailer::Base.deliveries.last
     assert_equal "sent", @record.reload.forward_status
-    # The fixture's provider headers show no DKIM signature from the From domain, so the copy is tagged.
-    assert_equal "[unverified sender] [example.org] Original", delivery.subject
+    # Registrar-forwarded fixture: Postmark's signals cannot speak for the sender, so no tag.
+    assert_equal "[example.org] Original", delivery.subject
     assert_equal [ "sender@example.net" ], delivery.reply_to
     assert_equal [ "owner@example.net" ], delivery.to
     assert_equal [ "forward@example.org" ], delivery.from
@@ -97,7 +97,7 @@ class ForwardCopyJobTest < ActiveSupport::TestCase
     assert_equal Mailroom.forward_stream, delivery.message_stream
     assert_includes delivery.body.decoded, "Received for inbox@example.org on #{@record.received_at}"
     assert_includes delivery.body.decoded, "From: Example Sender <sender@example.net>\n" \
-      "Sender check: unverified (DMARC fail, SPF pass, DKIM fail)\n\nBody"
+      "Sender check: unknown (DMARC none, SPF none, DKIM none)\n\nBody"
   end
 
   test "attachments stop at budget and report remainder" do

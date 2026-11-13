@@ -1,19 +1,22 @@
 # What the receiving side learned about who sent a message, read from its stored raw source.
 #
-# Postmark documents two authentication signals on inbound mail: a Received-SPF header and the
-# SpamAssassin rule list in X-Spam-Tests (DKIM_VALID_AU: a valid DKIM signature from the From domain).
-# It writes no Authentication-Results header and does not evaluate DMARC, so the DMARC verdict here is
-# computed from those signals: pass when the From domain authenticated (DKIM_VALID_AU, or an SPF pass
-# whose envelope domain aligns with the From domain), fail when the provider's checks ran and neither
-# held, none when there are no provider signals at all. It does not look up the domain's DMARC policy.
-#
-# A sender can write any of these headers as well. The provider adds its own above the ones that arrive
-# with the message, so only the topmost copy of each counts. Authentication-Results counts only when its
-# authserv-id is one the owner trusts (MAILROOM_TRUSTED_AUTHSERV_IDS, for a mailbox host in front of
-# Postmark that stamps one), and then only the topmost trusted one; forged copies sit below it.
+# 1. A trusted Authentication-Results decides when there is one. Mail forwarded by a registrar
+#    reaches Postmark from the forwarder, which checked the real sender first and recorded the
+#    verdict there. It counts only when its authserv-id is listed in MAILROOM_TRUSTED_AUTHSERV_IDS,
+#    and only the topmost such header counts; copies a sender planted sit below it.
+# 2. Otherwise the verdict comes from Postmark's own signals: the topmost Received-SPF and the
+#    SpamAssassin rules in X-Spam-Tests (Postmark writes no Authentication-Results and no DMARC).
+#    - pass: DKIM_VALID_AU (a valid signature from the From domain), or an SPF pass for an envelope
+#      domain aligned with the From domain.
+#    - fail: no aligned DKIM, and an SPF fail or softfail for an envelope domain aligned with the
+#      From domain, so the domain's own SPF rejected the host that sent this.
+#    - none: anything else. That includes forwarded mail, where Postmark's SPF result describes
+#      the forwarder's envelope and says nothing about the sender.
+#    SPF is reported only when the envelope domain aligns, and the DMARC policy is never looked up.
+# A sender can write any of these headers too. Postmark adds its own above the ones that arrive
+# with the message, so only the topmost copy of each counts.
 class SenderAuthentication
   SPF_RESULTS = %w[pass fail softfail neutral none temperror permerror].freeze
-  SPF_RULES = { "SPF_PASS" => "pass", "SPF_FAIL" => "fail", "SPF_SOFTFAIL" => "softfail", "SPF_NEUTRAL" => "neutral" }.freeze
 
   attr_reader :dmarc, :spf, :dkim, :source
 
@@ -74,13 +77,17 @@ class SenderAuthentication
       return nil if received_spf.nil? && spam_tests.nil?
 
       rules = spam_tests.to_s.upcase.split(/[\s,]+/)
-      spf = received_spf ? received_spf[/\A(\w+)/, 1].to_s.downcase : SPF_RULES.find { |rule, _| rules.include?(rule) }&.last
+      # A valid signature from some other domain (an ESP, a list) is neither a pass nor a failure here.
       dkim = if rules.include?("DKIM_VALID_AU") then "pass"
-      elsif rules.include?("DKIM_SIGNED") || rules.include?("DKIM_INVALID") then "fail"
+      elsif rules.include?("DKIM_INVALID") || (rules.include?("DKIM_SIGNED") && !rules.include?("DKIM_VALID")) then "fail"
       else "none"
       end
-      spf_aligned = spf == "pass" && aligned?(spf_envelope_domain(received_spf), from_domain)
-      new(dmarc: dkim == "pass" || spf_aligned ? "pass" : "fail", spf: limit(spf, SPF_RESULTS), dkim: dkim, source: "provider")
+      spf = aligned?(spf_envelope_domain(received_spf), from_domain) ? limit(received_spf[/\A(\w+)/, 1].to_s.downcase, SPF_RESULTS) : "none"
+      dmarc = if dkim == "pass" || spf == "pass" then "pass"
+      elsif %w[fail softfail].include?(spf) then "fail"
+      else "none"
+      end
+      new(dmarc: dmarc, spf: spf, dkim: dkim, source: "provider")
     end
 
     def authserv_id(value)

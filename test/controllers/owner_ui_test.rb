@@ -342,7 +342,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select "details pre", text: /Return-Path:/
     assert_select "details pre", text: /This message was sent/, count: 0
     assert_select "a[href=?]", new_draft_path(message_id: message.id)
-    assert_select "dd", text: "unverified (DMARC fail, SPF pass, DKIM fail)"
+    assert_select "dd", text: "unknown (DMARC none, SPF none, DKIM none)"
   end
 
   test "owner pages send a strict content security policy with a nonce for the importmap" do
