@@ -31,6 +31,10 @@ module Mailroom
     # Attachments are stored as received; no image variants are generated.
     config.active_storage.variant_processor = :disabled
 
+    # Attachments download only through AttachmentsController (signed-in owner, send_data). Active
+    # Storage's own blob, representation and direct-upload routes would be a second, unused way in.
+    config.active_storage.draw_routes = false
+
     # Raw inbound mail is the archive. Action Mailbox would delete it after 30 days by default.
     config.action_mailbox.incinerate = false
 
