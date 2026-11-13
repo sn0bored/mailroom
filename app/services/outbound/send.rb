@@ -30,15 +30,15 @@ module Outbound
     end
 
     # The job is enqueued outside the row's database (Solid Queue keeps its own), so the two cannot
-    # share a transaction. When the enqueue fails, undo the queued status before re-raising: otherwise the row claims a delivery no
-    # job will make, and an API retry with the same idempotency key would replay it as queued. A
-    # message that did not exist before the call is removed, so a retry is judged from scratch; an
-    # existing one (an owner's draft) is never destroyed and goes back to its earlier status.
+    # share a transaction. When the enqueue fails, undo the queued status before re-raising:
+    # otherwise the row claims a delivery no job will make, and an API retry with the same
+    # idempotency key would replay it as queued. A message that did not exist before the call is
+    # removed, so a retry is judged from scratch; an existing one (an owner's draft) is never
+    # destroyed and goes back to its earlier status.
     #
-    # Still open: a process killed between the insert and the enqueue leaves a queued row with no
-    # job. A sweeper that re-enqueues stale queued rows would cover it, but OutboundDeliveryJob only
-    # reads status == "queued" before delivering and does not claim the row atomically, so two jobs
-    # for one row can both deliver. The job needs an atomic claim before such a sweeper is safe.
+    # A process killed between the insert and the enqueue still leaves a queued row with no job.
+    # OutboundSweepJob re-enqueues those after a grace period, and the delivery job's claim makes
+    # a duplicate job harmless if the original turns out to be only late.
     def self.enqueue_delivery(record, was_new:, previous_status:)
       enqueue_error = nil
       enqueued = OutboundDeliveryJob.perform_later(record.id) { |job| enqueue_error = job.enqueue_error }

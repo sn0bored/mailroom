@@ -2,8 +2,8 @@
 #
 # Delivery semantics:
 # - A job delivers only after it claims the row: one conditional UPDATE moves it from queued to
-#   sending and stamps this job's id on it. A duplicate job for the same row finds nothing to claim
-#   and stops.
+#   sending and stamps this job's id on it. A duplicate job for the same row (a second enqueue, or
+#   OutboundSweepJob re-enqueueing a row whose job looked lost) finds nothing to claim and stops.
 # - A transport error retries this same job under the same job id, and the claim lets that job,
 #   and no other, take its own sending row again.
 # - Delivery is therefore at-least-once on transport retries: if the provider accepted the message
@@ -54,7 +54,8 @@ class OutboundDeliveryJob < ApplicationJob
     Audit.record("outbound.sent", actor: record.api_key || record.user, target: record)
   rescue StandardError => error
     # Never re-raise here: a transport-class error would retry and send the message again. If even
-    # the sent status did not stick, the row stays sending, which is never resent.
+    # the sent status did not stick, the row stays sending, and OutboundSweepJob later reports its
+    # outcome as unknown instead of resending it.
     Rails.logger.error("OutboundDeliveryJob: message #{record.id} was delivered, but recording it failed (#{error.class.name})")
   end
 end

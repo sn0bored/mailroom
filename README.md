@@ -134,6 +134,11 @@ the provider had in fact accepted the message before the response was lost, the 
 Duplicate delivery jobs are harmless: a job delivers only after it moves the message from `queued` to
 `sending` in one conditional update, and only that same job may pick it up again on a retry.
 
+A sweep runs every 5 minutes (Solid Queue's scheduler, from `config/recurring.yml`). A message still
+`queued` after 15 minutes lost its job and is queued again. A message still `sending` after an hour is
+marked `failed` with `"delivery outcome unknown; check the provider before resending"` and is never
+resent automatically.
+
 ## Backups
 
 `bin/mailroom-task mailroom:backup` copies every SQLite database with `.backup` and rsyncs the raw mail
