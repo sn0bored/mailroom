@@ -13,6 +13,7 @@ Rails.application.routes.draw do
     namespace :v1 do
       post "send", to: "send#create"
       get "health", to: "health#show"
+      get "unread", to: "unread#show"
     end
   end
 
