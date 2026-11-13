@@ -20,7 +20,7 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
     assert_equal "sent", @record.reload.status
     assert @record.sent_at
     assert_equal delivery.message_id, @record.postmark_message_id
-    assert_equal Mailroom.instance_id, delivery["X-Mailroom-Instance"].value
+    assert_nil delivery[LoopMarker::HEADER], "an ordinary send carries no loop marker"
     assert_equal @record.id.to_s, delivery["X-Mailroom-Message-Id"].value
     assert_equal "parent@example.org", delivery.in_reply_to
     assert_equal "ancestor@example.org", delivery.references

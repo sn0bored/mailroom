@@ -38,12 +38,18 @@ module Mailroom
   # (config/initializers/preflight.rb), and any other environment ignores it.
   def self.trust_local? = Rails.env.local? && ENV["MAILROOM_TRUST_LOCAL"] == "1"
 
+  # authserv-ids whose Authentication-Results header decides the sender check: normally the registrar
+  # forwarder in front of Postmark, which checks the real sender before forwarding. Postmark writes none.
+  def self.trusted_authserv_ids
+    ENV.fetch("MAILROOM_TRUSTED_AUTHSERV_IDS", "").split(",").map { |id| id.strip.downcase }.reject(&:empty?)
+  end
+
   # True when outbound mail can actually leave: a Postmark token in production, or the test delivery method.
   def self.sending_configured?
     ENV["POSTMARK_SERVER_TOKEN"].present? || ActionMailer::Base.delivery_method == :test
   end
 
-  # Stamped on every outbound message so a copy that comes back is recognised as a loop.
+  # Names this install; also salts the loop marker key (see LoopMarker).
   def self.instance_id
     ENV["MAILROOM_INSTANCE_ID"].presence || Setting.get("instance_id") || Setting.set("instance_id", SecureRandom.hex(8)).value
   end

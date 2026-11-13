@@ -99,9 +99,13 @@ module Intake
       Rails::HTML5::FullSanitizer.new.sanitize(utf8(html)).to_s.squish
     end
 
+    # The ingress always prepends X-Mailroom-Spam-Score, so the topmost one is the provider's verdict
+    # ("none": no score). A sender can write X-Spam-Score, or another X-Mailroom-Spam-Score further
+    # down; X-Spam-Score is read only when no Mailroom header exists (mail that skipped that ingress).
     def spam_score
-      value = header("X-Spam-Score") || header("X-Mailroom-Spam-Score")
-      value.present? ? Float(value.strip) : nil
+      owned = header("X-Mailroom-Spam-Score")
+      value = owned.nil? ? header("X-Spam-Score") : owned
+      value.present? && value.strip != "none" ? Float(value.strip) : nil
     rescue ArgumentError, TypeError
       nil
     end
