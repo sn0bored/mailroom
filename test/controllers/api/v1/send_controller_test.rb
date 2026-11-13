@@ -1,4 +1,6 @@
 require "test_helper"
+require_relative "../../../support/outbound_stubs"
+using OutboundStubs
 
 class ApiSendControllerTest < ActionDispatch::IntegrationTest
   include ActiveJob::TestHelper
@@ -17,6 +19,16 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
 
   def status_request(id, token = @token)
     get "/api/v1/send/#{id}", headers: { "Authorization" => "Bearer #{token}" }
+  end
+
+  # Render unexpected exceptions as the 500 a client would get, instead of raising into the test.
+  def with_rendered_exceptions
+    env_config = Rails.application.env_config
+    original = env_config["action_dispatch.show_exceptions"]
+    env_config["action_dispatch.show_exceptions"] = :all
+    yield
+  ensure
+    env_config["action_dispatch.show_exceptions"] = original
   end
 
   test "authentication is required" do
@@ -103,6 +115,22 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
     assert_equal "queued", response.parsed_body["status"]
     assert_nil response.parsed_body["idempotent"]
     assert_equal [ response.parsed_body["id"] ], OutboundMessage.where(idempotency_key: "retry-one").ids
+  end
+
+  test "a send whose enqueue fails is a 500 that leaves no row, and its retry is queued" do
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "ActiveRecord::StatementInvalid: database is locked" }
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      with_rendered_exceptions do
+        assert_no_difference("OutboundMessage.count") { send_request(@payload.merge(idempotency_key: "queue-down")) }
+      end
+    end
+    assert_response :internal_server_error
+    assert_not AuditEvent.exists?(action: "api.send")
+
+    assert_enqueued_jobs(1, only: OutboundDeliveryJob) { send_request(@payload.merge(idempotency_key: "queue-down")) }
+    assert_response :accepted
+    assert_equal "queued", response.parsed_body["status"]
+    assert_nil response.parsed_body["idempotent"]
   end
 
   test "replaying the key of a message failed by the upgrade cleanup reports it as failed" do
