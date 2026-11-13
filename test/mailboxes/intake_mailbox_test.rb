@@ -289,4 +289,15 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert @domain.reload.probe_received_at.present?
     assert_equal "skipped:probe", message.forward_status
   end
+
+  test "trace headers forged below the host's MX hop do not misfile hosted mail" do
+    @domain.update!(catch_all_mailbox: "info@example.org")
+    forged = "X-Original-To: ceo@example.org\nDelivered-To: ceo@example.org\n" \
+             "Received: from forged.sender.example.net by mx1.mailhost.example.net with ESMTP id FORGED\n" \
+             "\tfor <ceo@example.org>; Fri, 13 Nov 2026 08:59:59 +0000 (UTC)\n"
+    source = hosted_source.sub("X-Spam-Status:", forged + "X-Spam-Status:")
+    message = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + source)
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+  end
 end

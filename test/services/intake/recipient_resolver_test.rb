@@ -60,7 +60,7 @@ class Intake::RecipientResolverTest < ActiveSupport::TestCase
     assert_not result.trace.any? { |t| t["header"] == "catch_all_mailbox" }
   end
 
-  test "a catch-all mailbox is looked past to the oldest Received hop's recipient" do
+  test "a catch-all mailbox is looked past to the recipient on the host's MX hop" do
     result = resolve_hosted
     assert_equal "careers@example.org", result.primary
     assert_equal "catch-all:Received", result.routed_via
@@ -133,15 +133,47 @@ class Intake::RecipientResolverTest < ActiveSupport::TestCase
     assert_equal "catch-all:To", result.routed_via
   end
 
-  test "the oldest Received hop wins over a newer one on the same domain" do
+  test "the trace is read from the top down, so the hop nearest us wins" do
     source = hosted_source.sub("for <info@example.org>;", "for <alias-target@example.org>;")
+    assert_equal "alias-target@example.org", resolve_hosted(source).primary
+  end
+
+  FORGED = "X-Original-To: ceo@example.org\nDelivered-To: ceo@example.org\n" \
+           "Received: from forged.sender.example.net by mx1.mailhost.example.net (Postfix) with ESMTP id FORGED\n" \
+           "\tfor <ceo@example.org>; Fri, 13 Nov 2026 08:59:59 +0000 (UTC)\n".freeze
+
+  def with_forged_trace(source)
+    marker = "X-Spam-Status: No, score=0.2\n"
+    source.sub(marker, FORGED + marker).tap { |s| assert_not_equal source, s }
+  end
+
+  test "trace headers the sender wrote below the host's MX hop never beat it" do
+    result = resolve_hosted(with_forged_trace(hosted_source))
+    assert_equal "careers@example.org", result.primary
+    assert_equal "catch-all:Received", result.routed_via
+    assert_not_includes result.trace, { "header" => "X-Original-To", "address" => "careers@example.org" }
+  end
+
+  test "residual: with no single-recipient MX hop, a header the sender planted can still win on the same domain" do
+    # Accepted: no worse than a forged To, and the domain cannot change.
+    source = with_forged_trace(without_mx_for).sub("To: Careers Team <careers@example.org>", "To: careers@example.org, press@example.org")
+    result = resolve_hosted(source)
+    assert_equal "ceo@example.org", result.primary
+    assert_equal "catch-all:X-Original-To", result.routed_via
+  end
+
+  test "stray 8-bit header bytes do not stop the scan" do
+    # Raw mail arrives as bytes; a Latin-1 subject is not valid UTF-8.
+    source = hosted_source.b.sub("Subject: Application for the platform role", "Subject: Caf\xE9 application".b)
+                           .sub("To: Careers Team <careers@example.org>", "To: partner@example.net")
+    assert_not source.dup.force_encoding(Encoding::UTF_8).valid_encoding?
     assert_equal "careers@example.org", resolve_hosted(source).primary
   end
 
-  test "headers that record the original recipient outrank Received and To" do
+  test "original-recipient headers the host writes at delivery count before its MX hop" do
     { "X-Original-To" => "Postfix", "X-Gm-Original-To" => "Google", "X-Delivered-to" => "Fastmail",
       "Envelope-To" => "Exim" }.each_key do |header|
-      source = "#{header}: <jobs@example.org>\n" + hosted_source
+      source = hosted_source.sub("Delivered-To: info@example.org", "#{header}: <jobs@example.org>\nDelivered-To: info@example.org")
       result = resolve_hosted(source)
       assert_equal "jobs@example.org", result.primary, header
       assert_equal "catch-all:#{header.sub('X-Delivered-to', 'X-Delivered-To')}", result.routed_via

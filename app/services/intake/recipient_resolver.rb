@@ -9,12 +9,13 @@ module Intake
   #
   # A domain that keeps a hosted catch-all mailbox and auto-forwards it here is different: the
   # host stamps that mailbox on everything (Delivered-To, its last Received hop), so every message
-  # first resolves to it. When a domain names that mailbox, look past it on the same domain.
+  # first resolves to it. When a domain names that mailbox, look past it on the same domain,
+  # reading the trace from the top down so the host's hops count before anything the sender wrote.
   class RecipientResolver
     ENVELOPE_HEADERS = %w[Delivered-To X-Original-To X-Forwarded-To Envelope-To X-Envelope-To].freeze
     ADDRESS_HEADERS = %w[To Cc Resent-To].freeze
     # Headers a receiving host writes with the recipient it saw before its own aliasing: Postfix
-    # X-Original-To, Google X-Gm-Original-To, Fastmail X-Delivered-To, Exim Envelope-To, then any
+    # X-Original-To, Google X-Gm-Original-To, Fastmail X-Delivered-To, Exim Envelope-To, and an
     # earlier hop's Delivered-To. Read only to look past a catch-all mailbox. Not X-Forwarded-To or
     # X-Sieve-Redirected-From: those name the forwarding mailbox or its destination, never the
     # original recipient.
@@ -79,19 +80,24 @@ module Intake
       end
     end
 
-    # Same domain only, so the domain decision never changes. Original-recipient headers first,
-    # then Received "for" clauses from the oldest hop (the first host to see the sender's envelope),
-    # skipping the mailbox in both because the host writes it there itself. Then To, Cc, Resent-To,
-    # where the mailbox counts: mail visibly addressed to it stays with it.
+    # Same domain only, so the domain decision never changes.
+    #
+    # First the trace fields (original-recipient headers and single-recipient Received hops) in one
+    # scan from the top of the message down. Every hop prepends, so the top was written last, by the
+    # hops nearest us: Postmark, the redirect, the host's delivery, then the host's MX. Anything
+    # below the MX hop was written by the sender, so the host's genuine "for <careers@...>" is
+    # reached before a forged one. The mailbox is skipped here because the host writes it itself.
+    #
+    # Then To, Cc, Resent-To, where the mailbox counts: mail visibly addressed to it stays with it.
+    #
+    # Accepted residual: when the MX hop names no single recipient (one transaction carried
+    # several), a trace header the sender planted below it can still win. That is no worse than a
+    # forged To, and it can never move the message to another domain.
     def look_past_catch_all_mailbox(result)
       mailbox = result.primary
       domain = domain_of(mailbox)
-      envelope = ORIGINAL_RECIPIENT_HEADERS.flat_map { |name| addresses_in(name) }
-      received = header_values("Received").reverse.flat_map { |value| received_for(value).map { |address| [ "Received", address ] } }
-      visible = ADDRESS_HEADERS.flat_map { |name| addresses_in(name) }
-
-      hit = (envelope + received).find { |_, address| domain_of(address) == domain && address != mailbox } ||
-            visible.find { |_, address| domain_of(address) == domain }
+      hit = trace_candidates.find { |_, address| domain_of(address) == domain && address != mailbox } ||
+            ADDRESS_HEADERS.flat_map { |name| addresses_in(name) }.find { |_, address| domain_of(address) == domain }
       trace = result.trace + [ { "header" => "catch_all_mailbox", "address" => mailbox } ]
       return Result.new(**result.to_h.merge(trace: trace)) if hit.nil? || hit[1] == mailbox
 
@@ -103,6 +109,31 @@ module Intake
 
     def addresses_in(name)
       header_values(name).flat_map { |value| extract(value).map { |address| [ name, address ] } }
+    end
+
+    def trace_candidates
+      fields_in_document_order.flat_map do |name, value|
+        if name.casecmp?("Received")
+          received_for(value).map { |address| [ "Received", address ] }
+        elsif (header = ORIGINAL_RECIPIENT_HEADERS.find { |known| known.casecmp?(name) })
+          extract(value).map { |address| [ header, address ] }
+        else
+          []
+        end
+      end
+    end
+
+    # The Mail gem regroups fields by name, which loses which hop wrote what. Read the raw header
+    # block instead, unfolding continuation lines. Stray 8-bit bytes are scrubbed, not fatal.
+    def fields_in_document_order
+      raw = @mail.header.raw_source.to_s.dup.force_encoding(Encoding::UTF_8).scrub
+      return @mail.header.fields.map { |f| [ f.name.to_s, f.value.to_s ] } if raw.empty?
+      raw.split(/\r?\n(?![ \t])/).filter_map do |field|
+        name, value = field.split(":", 2)
+        [ name.strip, value.gsub(/\r?\n[ \t]+/, " ").strip ] if value
+      end
+    rescue StandardError
+      []
     end
 
     # The single recipient a Received hop names. A hop listing several recipients does not say

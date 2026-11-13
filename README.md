@@ -54,10 +54,12 @@ forward from a mailbox there instead of the registrar:
 3. In Mailroom, enter `info@example.org` as the domain's hosted catch-all mailbox.
 
 The host stamps its mailbox on everything it forwards, so without step 3 every message shows as
-`info@`. With it, Mailroom looks past the mailbox, on the same domain only: first headers that record
-the original recipient (such as `X-Original-To`, `X-Gm-Original-To`, `X-Delivered-To` or
-`Envelope-To`), then the oldest `Received: ... for <address>` hop, then `To` and `Cc`. Mail sent to
-`info@` itself stays there. These messages show `routed_via: catch-all:<header>`.
+`info@`. With it, Mailroom looks past the mailbox, on the same domain only. It reads the trace from
+the top down, so the hops nearest Mailroom count first and the host's own MX hop comes before
+anything the sender wrote: `Received: ... for <address>` lines and headers that record the original
+recipient (such as `X-Original-To`, `X-Gm-Original-To`, `X-Delivered-To` or `Envelope-To`). Then it
+falls back to `To` and `Cc`. Mail sent to `info@` itself stays there. These messages show
+`routed_via: catch-all:<header>`.
 
 ## Setup
 
