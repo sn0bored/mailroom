@@ -6,7 +6,6 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
 
   setup do
     Rack::Attack.reset!
-    host! "example.org:8443"
     @user = User.create!(email_address: "owner@example.org", password: "test-password")
     @domain = Domain.create!(name: "example.org")
     sign_in_as(@user)
@@ -377,6 +376,16 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_equal "file content", response.body
     other = create_message
     get message_attachment_path(other, attachment)
+    assert_response :not_found
+  end
+
+  test "Active Storage's own routes are not drawn" do
+    message = create_message
+    message.attachments.attach(io: StringIO.new("file content"), filename: "sample.txt", content_type: "text/plain")
+    blob = message.attachments.first.blob
+    get "/rails/active_storage/blobs/redirect/#{blob.signed_id}/sample.txt"
+    assert_response :not_found
+    post "/rails/active_storage/direct_uploads", params: { blob: { filename: "x.txt", byte_size: 1, checksum: "x", content_type: "text/plain" } }
     assert_response :not_found
   end
 

@@ -31,11 +31,19 @@ module Mailroom
     # Attachments are stored as received; no image variants are generated.
     config.active_storage.variant_processor = :disabled
 
+    # Attachments download only through AttachmentsController (signed-in owner, send_data). Active
+    # Storage's own blob, representation and direct-upload routes would be a second, unused way in.
+    config.active_storage.draw_routes = false
+
     # Raw inbound mail is the archive. Action Mailbox would delete it after 30 days by default.
     config.action_mailbox.incinerate = false
 
     # Mail is untrusted input; keep bodies and raw payloads out of the logs.
     config.filter_parameters += %i[RawEmail Content token password text_body html_body]
+    # Partial, case-insensitive matches: Postmark's inbound fields (TextBody, HtmlBody, StrippedTextReply,
+    # Subject, From, FromName, To, Cc, Bcc, Headers, Attachments, OriginalRecipient) and the send API's
+    # from, to, subject, text and html. Logs only; the params themselves are untouched.
+    config.filter_parameters += %i[body subject reply from to cc bcc headers attachments recipient text html]
 
     # Throttling for logins, API traffic and sends.
     config.middleware.use Rack::Attack

@@ -10,7 +10,7 @@ class McpControllerTest < ActionDispatch::IntegrationTest
 
   def rpc(method, params = {}, token: @read_token, id: 1)
     post "/mcp", params: { jsonrpc: "2.0", id: id, method: method, params: params }.to_json,
-                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{token}", "Host" => "localhost" }
+                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{token}" }
     response.parsed_body
   end
 
@@ -85,9 +85,54 @@ class McpControllerTest < ActionDispatch::IntegrationTest
     assert AuditEvent.where(action: "mcp.draft_reply").exists?
   end
 
+  def rpc_batch(requests, token: @read_token)
+    post "/mcp", params: requests.to_json, headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{token}" }
+    response.parsed_body
+  end
+
+  test "a batch of up to MAX_BATCH requests is answered in full" do
+    body = rpc_batch(Array.new(McpController::MAX_BATCH) { |i| { jsonrpc: "2.0", id: i, method: "ping" } })
+    assert_response :success
+    assert_equal (0...McpController::MAX_BATCH).to_a, body.map { |r| r["id"] }
+  end
+
+  test "an oversize batch is refused whole, before any request in it runs" do
+    update = { name: "update_message", arguments: { id: @message.id, read: true } }
+    body = rpc_batch(Array.new(McpController::MAX_BATCH + 1) { |i| { jsonrpc: "2.0", id: i, method: "tools/call", params: update } },
+                     token: @full_token)
+    assert_response :bad_request
+    assert_equal({ "jsonrpc" => "2.0", "id" => nil, "error" => { "code" => -32600, "message" => "invalid request: batch larger than #{McpController::MAX_BATCH}" } }, body)
+    assert_not @message.reload.read?
+  end
+
+  test "an empty batch and non-object batch entries are invalid requests" do
+    assert_equal(-32600, rpc_batch([]).dig("error", "code"))
+    assert_response :bad_request
+    body = rpc_batch([ 1, { jsonrpc: "2.0", id: 7, method: "ping" } ])
+    assert_response :success
+    assert_equal [ -32600, nil ], body.map { |r| r.dig("error", "code") }
+    assert_equal({}, body.last["result"])
+  end
+
+  test "GET and DELETE are 405 with Allow: POST and no body, without a key" do
+    [ :get, :delete ].each do |verb|
+      process verb, "/mcp"
+      assert_response :method_not_allowed
+      assert_equal "POST", response.headers["Allow"]
+      assert_empty response.body
+    end
+  end
+
+  test "a batch of only notifications is 202 with no body" do
+    post "/mcp", params: [ { jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", method: "notifications/cancelled" } ].to_json,
+                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}" }
+    assert_response :accepted
+    assert_empty response.body
+  end
+
   test "notifications get no body" do
     post "/mcp", params: { jsonrpc: "2.0", method: "notifications/initialized" }.to_json,
-                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}", "Host" => "localhost" }
+                 headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}" }
     assert_response :accepted
   end
 end
