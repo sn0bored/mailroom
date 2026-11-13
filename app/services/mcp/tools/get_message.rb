@@ -21,7 +21,7 @@ module Mcp
         truncated = body.length > max_chars
         attachments = message.attachments.attached? ? message.attachments.map { |a| "attachment id=#{a.id} #{field(a.filename)} (#{a.byte_size} bytes, #{field(a.content_type)})" } : []
         lines = [
-          "From: #{field(message.display_from)} | To: #{field(message.to_address)} | Subject: #{field(message.subject)} | Date: #{message.sent_at&.utc&.iso8601 || message.received_at.utc.iso8601}",
+          "From: #{sender(message)} | To: #{field(message.to_address)} | Subject: #{field(message.subject)} | Date: #{message.sent_at&.utc&.iso8601 || message.received_at.utc.iso8601}",
           "Routed via: #{message.routed_via} | Domain: #{message.domain&.name || 'unrouted'} | Spam score: #{message.spam_score.inspect}",
           *attachments,
           ("Body truncated: first #{max_chars} of #{body.length} characters" if truncated)

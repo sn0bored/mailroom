@@ -25,7 +25,7 @@ module Mcp
     class << self
       # body is email text and comes back quoted line by line. lines are Mailroom's own (rows, headers),
       # one line each and unquoted; the caller passes every sender-controlled value in them through
-      # single_line first.
+      # single_line or mailbox first.
       def wrap(body = nil, label:, lines: []) = bracket(body, label: label, lines: lines).join("\n")
 
       # The text that goes before and after the content, for blocks that cannot be one string (images):
@@ -48,6 +48,15 @@ module Mcp
       # A field rendered on one line next to others (subject, sender, recipient, filename): it cannot
       # start a new line or contain the separator, so it cannot forge another row or field.
       def single_line(text) = clean(text).squish.tr(FIELD_SEPARATOR, "¦")
+
+      # A sender as one field: the display name quoted with its quotes and backslashes escaped, the
+      # address apart in angle brackets, so a name cannot pass for an address.
+      def mailbox(name, address)
+        name = single_line(name)
+        address = single_line(address)
+        return address if name.empty?
+        %("#{name.gsub(/["\\]/) { |char| "\\#{char}" }}" <#{address}>)
+      end
 
       # Bytes from storage arrive as BINARY; read them as UTF-8 and replace what does not decode.
       def utf8(text)

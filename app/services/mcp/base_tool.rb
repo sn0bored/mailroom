@@ -59,8 +59,8 @@ module Mcp
       Audit.record(action, actor: api_key, target: target, outcome: outcome, error: error)
     end
 
-    # One row per message. Sender-controlled fields go through Frame.single_line so a subject or
-    # display name cannot break the row or forge another one.
+    # One row per message. Sender-controlled fields go through Frame.single_line or Frame.mailbox so a
+    # subject or display name cannot break the row, forge another one, or pass for the address.
     def message_line(message)
       flags = []
       flags << "unread" unless message.read?
@@ -72,13 +72,15 @@ module Mcp
         message.received_at&.utc&.iso8601,
         "domain=#{message.domain&.name || 'unrouted'}",
         "to=#{field(message.to_address)}",
-        "from=#{field(message.display_from)}",
+        "from=#{sender(message)}",
         "subject=#{field(message.subject)}",
         flags.join(" ")
       ].compact.join(" | ")
     end
 
     def field(value) = Frame.single_line(value)
+
+    def sender(message) = Frame.mailbox(message.from_name, message.from_address)
 
     def message_meta(message)
       {

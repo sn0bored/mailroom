@@ -105,6 +105,15 @@ class Mcp::FrameTest < ActiveSupport::TestCase
     assert_nil Mcp::Frame.single_line(nil).presence
   end
 
+  test "mailbox quotes the display name and keeps the address apart" do
+    assert_equal %("Owner <owner@example.net>" <m@example.com>), Mcp::Frame.mailbox("Owner <owner@example.net>", "m@example.com")
+    assert_equal %("Owner\\" <owner@example.net>" <m@example.com>), Mcp::Frame.mailbox(%(Owner" <owner@example.net>), "m@example.com")
+    assert_equal %("a\\\\b" <m@example.com>), Mcp::Frame.mailbox("a\\b", "m@example.com")
+    assert_equal %("Line break ¦ x" <m@example.com>), Mcp::Frame.mailbox("Line\nbreak | x", "m@example.com")
+    assert_equal "m@example.com", Mcp::Frame.mailbox(nil, "m@example.com")
+    assert_equal "m@example.com", Mcp::Frame.mailbox(" ", "m@example.com")
+  end
+
   test "utf8 reads stored bytes as UTF-8 and replaces what does not decode" do
     assert_equal "café", Mcp::Frame.utf8("café".b)
     assert_equal Encoding::UTF_8, Mcp::Frame.utf8("café".b).encoding
