@@ -58,7 +58,7 @@ module Intake
     def resolve
       envelope = fields_in_document_order.flat_map do |name, value|
         if name.casecmp?("Received")
-          value.scan(RECEIVED_FOR).flatten.map { |address| [ "Received", address.downcase ] }
+          received_after_by(value).scan(RECEIVED_FOR).flatten.map { |address| [ "Received", address.downcase ] }
         elsif (header = ENVELOPE_HEADERS.find { |known| known.casecmp?(name) })
           extract(value).map { |address| [ header, address ] }
         else
@@ -153,7 +153,8 @@ module Intake
     def trace_fields
       fields_in_document_order.filter_map do |name, value|
         if name.casecmp?("Received")
-          [ "Received", received_for(value), value.scan(RECEIVED_BY).flatten.map { |host| host.downcase.chomp(".") } ]
+          clean = received_tokens(value)
+          [ "Received", received_for(clean), clean.scan(RECEIVED_BY).flatten.map { |host| host.downcase.chomp(".") } ]
         elsif (header = ORIGINAL_RECIPIENT_HEADERS.find { |known| known.casecmp?(name) })
           [ header, extract(value), [] ]
         end
@@ -181,9 +182,45 @@ module Intake
     # The single recipient a Received hop names. A hop listing several recipients does not say
     # which one this copy was for, so it counts for nothing.
     def received_for(value)
-      list = value[RECEIVED_FOR_LIST, 1]
+      list = received_after_by(value)[RECEIVED_FOR_LIST, 1]
       addresses = list.to_s.scan(ADDRESS).map(&:downcase).uniq
       addresses.size == 1 ? addresses : []
+    end
+
+    def received_after_by(value)
+      clean = received_tokens(value)
+      match = RECEIVED_BY.match(clean)
+      match ? clean[match.end(0)..].split(";", 2).first.to_s : ""
+    end
+
+    # Comments can nest and both comments and quoted strings allow escaped characters.
+    # Replace them with whitespace so removing one cannot join two tokens into a clause.
+    def received_tokens(value)
+      clean = +""
+      depth = 0
+      quoted = false
+      escaped = false
+      value.each_char do |char|
+        if escaped
+          escaped = false
+        elsif (depth.positive? || quoted) && char == "\\"
+          escaped = true
+        elsif depth.positive?
+          depth += 1 if char == "("
+          depth -= 1 if char == ")"
+        elsif quoted
+          quoted = false if char == '"'
+        elsif char == "("
+          depth = 1
+          clean << " "
+        elsif char == '"'
+          quoted = true
+          clean << " "
+        else
+          clean << char
+        end
+      end
+      clean
     end
 
     def domain_of(address) = address.to_s.split("@").last.to_s

@@ -379,6 +379,74 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert message.has_html
   end
 
+  test "MIME bypasses are rejected quickly even without the pre-scan" do
+    sources = [
+      nested_source(33), nested_source(3000),
+      nested_source(1000).gsub(/^(--b\d+)$/, "\\1--x\n\\1"),
+      nested_source(1000).gsub('boundary="', 'boundary*0="'),
+      nested_source(1000).gsub('boundary="', 'boundary*="us-ascii\'\'')
+    ]
+    sources.each do |source|
+      inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(source)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      Intake::MimeDepth.stub(:call, 0) { inbound.route }
+      assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2
+      message = Message.find_by!(inbound_email_id: inbound.id)
+      assert_equal "MimeTooDeep", message.parse_error
+      assert_equal "skipped:mime_too_deep", message.forward_status
+      assert_equal source, message.raw_source
+      assert inbound.reload.delivered?
+    end
+    assert_equal "hdr:X-Original-To", receive_source(nested_source(32)).routed_via
+  end
+
+  test "body boundary text and DSN digests are accepted quickly" do
+    digest = +"Content-Type: multipart/digest; boundary=digest\n\n"
+    40.times do |i|
+      digest << "--digest\nContent-Type: text/rfc822-headers\n\nContent-Type: multipart/mixed; boundary=b#{i}\n\n"
+    end
+    digest << "--digest--\n"
+    [ "Content-Type: text/plain\n\n" + (" boundary=body\n" * 33), digest ].each do |body|
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      message = receive_source("From: sender@example.net\nTo: hello@example.org\nSubject: report\n" + body)
+      assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 2
+      assert_nil message.parse_error
+      assert_equal "to:To", message.routed_via
+    end
+  end
+
+  %w[From To Cc Subject].each do |header|
+    test "same Message-ID and body with different #{header} is separate mail" do
+      source = "From: ceo@bank.test\nTo: hello@example.org\nCc: copy@example.org\nSubject: URGENT wire\n" \
+        "Message-ID: <same-id@example.net>\n\nSame body\n"
+      first = receive_source(source)
+      replacement = header == "Subject" ? "Routine update" : "real@partner.test"
+      second = receive_source(source.sub(/^#{header}: .*$/, "#{header}: #{replacement}"))
+      assert second, "different #{header} must not merge"
+      assert_equal 2, Message.count
+      assert_not_equal first.raw_body_digest, second.raw_body_digest
+      assert_equal replacement, second.from_address if header == "From"
+    end
+  end
+
+  test "legacy rows without a digest never merge" do
+    source = "From: sender@example.net\nTo: hello@example.org\nSubject: legacy\nMessage-ID: <legacy@example.net>\n\nbody"
+    first = receive_source(source)
+    first.update!(raw_body_digest: nil)
+    assert receive_source("Received: by mx.example.net\n" + source)
+    assert_equal 2, Message.count
+  end
+
+  test "folded identity headers still merge across delivery paths" do
+    source = "From: Sender <sender@example.net>\nTo: hello@example.org, copy@example.org\n" \
+      "Cc: other@example.org\nSubject: Routine update\nMessage-ID: <folded@example.net>\n\nbody"
+    first = receive_source(source)
+    folded = source.sub(", copy", ",\n\tcopy").sub("Routine update", "Routine\n update")
+    assert_nil receive_source("Received: by mx.example.net\n" + folded)
+    assert_equal 1, Message.count
+    assert first.reload.routing_trace.any? { |entry| entry["header"] == "duplicate" }
+  end
+
   test "a stack overflow while parsing still leaves a row and nothing in processing" do
     inbound = ActionMailbox::InboundEmail.create_and_extract_message_id!(forwarded_source)
     Intake::MessageBuilder.stub(:new, ->(*) { raise SystemStackError, "stack level too deep" }) { inbound.route }
@@ -416,9 +484,10 @@ class IntakeMailboxTest < ActiveSupport::TestCase
 
   test "merged matches stay capped" do
     many = (1..60).map { |i| "u#{i}@example.org" }.join(", ")
-    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{many}"))
+    first = receive_source("X-Original-To: #{many}\n" + forwarded_source)
     others = (61..120).map { |i| "u#{i}@example.org" }.join(", ")
-    receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\n" + forwarded_source.sub("To: hello@example.org", "To: #{others}"))
+    assert_nil receive_source("X-Original-To: #{others}\n" + forwarded_source)
+    assert_equal 1, Message.count
     assert_equal Intake::RecipientResolver::MAX_MATCHES, first.reload.matched_addresses.size
   end
 end

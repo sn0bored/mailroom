@@ -10,9 +10,11 @@ class IntakeMailbox < ApplicationMailbox
     depth = Intake::MimeDepth.call(inbound_email.source, limit: MAX_MIME_DEPTH)
     return store_too_deep if depth > MAX_MIME_DEPTH
 
+    Intake::MimeDepth.enforce!(mail, limit: MAX_MIME_DEPTH)
     resolution = Intake::RecipientResolver.call(mail)
 
     same_id = same_message_id_for_target(resolution)
+    # Legacy rows with a null digest cannot prove identity and are never merged.
     if (existing = same_id.find { |prior| prior.raw_body_digest.present? && prior.raw_body_digest == raw_body_digest })
       merge_duplicate(existing, resolution)
       return
@@ -25,7 +27,7 @@ class IntakeMailbox < ApplicationMailbox
     message.routed_via = "loop" if loop? && !probe
     message.blocked = BlockedSender.blocks?(message.from_address)
     message.raw_body_digest = raw_body_digest
-    # Same Message-ID, different body: different mail, stored and forwarded as usual, with a note.
+    # Same Message-ID, different content: different mail, stored and forwarded as usual, with a note.
     message.routing_trace = Array(message.routing_trace) + [ { "header" => "same_message_id", "address" => "message:#{same_id.first.id}" } ] if same_id.any?
     message.save!
     builder.attach_to(message)
@@ -34,6 +36,8 @@ class IntakeMailbox < ApplicationMailbox
     message.domain.update!(probe_received_at: Time.current) if probe
 
     dispatch_forward_copy(message, probe: probe)
+  rescue Intake::MimeDepth::MimeTooDeep
+    store_too_deep
   # SystemStackError is not a StandardError; left unrescued it strands the email in processing.
   rescue StandardError, SystemStackError => e
     store_fallback(e)
@@ -45,9 +49,9 @@ class IntakeMailbox < ApplicationMailbox
   # same forward target or, when this one has none, any of them (nothing to forward, nothing to
   # lose). A distinct target is a genuine separate delivery and gets its own row and copy.
   #
-  # Only a matching raw body makes one of them a duplicate to merge into. Message-IDs are chosen by
+  # Only matching content makes one of them a duplicate to merge into. Message-IDs are chosen by
   # the sender, so one who copies a real ID and arrives first must not swallow the real message:
-  # same ID with a different body is different mail, stored and forwarded like any other.
+  # same ID with different sender, recipients, subject or body is different mail.
   def same_message_id_for_target(resolution)
     id = mail.message_id.presence or return []
     prior = Message.where(rfc822_message_id: id)
@@ -61,11 +65,24 @@ class IntakeMailbox < ApplicationMailbox
     []
   end
 
-  # SHA-256 of the raw body with line endings normalised; headers differ per delivery path.
+  # Keep the historical column name, but include identity headers as well as the raw body.
+  # Unfold headers and normalise line endings; delivery-path headers may still differ.
   def raw_body_digest
     @raw_body_digest ||= begin
       body = inbound_email.source.to_s.b.split(/\r?\n\r?\n/, 2)[1].to_s
-      Digest::SHA256.hexdigest(body.gsub(/\r\n?/, "\n"))
+      values = %w[From To Cc Subject].map do |name|
+        mail.header.fields.select { |field| field.name.casecmp?(name) }.map do |field|
+          field.value.to_s.b.gsub(/\r\n?/, "\n").gsub(/\n[ \t]+/, " ").gsub(/[ \t]+/, " ").strip
+        end
+      end
+      # Length framing preserves field/value boundaries, even for malformed header bytes.
+      digest = Digest::SHA256.new
+      values.each do |fields|
+        digest << "#{fields.size}:"
+        fields.each { |value| digest << "#{value.bytesize}:" << value }
+      end
+      digest << body.gsub(/\r\n?/, "\n")
+      digest.hexdigest
     end
   end
 
