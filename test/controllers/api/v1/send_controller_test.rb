@@ -245,11 +245,13 @@ class ApiSendControllerTest < ActionDispatch::IntegrationTest
   end
 
   test "health needs no authentication and reports counts" do
-    OutboundMessage.create!(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ], status: "queued")
+    %w[queued sending sent].each do |status|
+      OutboundMessage.create!(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ], status: status)
+    end
     Domain.create!(name: "example.net", active: false)
     get "/api/v1/health"
     assert_response :ok
     assert_equal({ "ok" => true, "version" => Mailroom::VERSION, "last_inbound_at" => nil,
-      "queued_outbound" => 1, "domains" => 1 }, response.parsed_body)
+      "queued_outbound" => 2, "domains" => 1 }, response.parsed_body)
   end
 end

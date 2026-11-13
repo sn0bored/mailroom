@@ -122,12 +122,17 @@ Every send response is the same object, which never includes subjects, addresses
 Idempotency keys are scoped to the API key, and only an accepted message is stored under one. A refused
 or invalid request leaves nothing behind, so retrying it with the same key is evaluated again from
 scratch: once the owner enables sending for the domain, the same retry is queued. Retrying a key that
-was accepted never sends twice.
+was accepted never queues the message twice.
 
 `GET /api/v1/send/:id` with a `mail:send` key returns that object for one of the key's own messages.
-`status` goes from `queued` to `sent` (with `sent_at` and the provider's message id) or `failed` (with
-the error class in `error`). A message sent with another key answers `404`, the same as one that does
-not exist.
+`status` goes from `queued` to `sending` (a delivery job has claimed it) and then to `sent` (with
+`sent_at` and the provider's message id) or `failed` (with the reason in `error`). A message sent with
+another key answers `404`, the same as one that does not exist.
+
+Delivery is at-least-once. A transport error (a timeout, a dropped connection) is retried twice, and if
+the provider had in fact accepted the message before the response was lost, the retry sends it again.
+Duplicate delivery jobs are harmless: a job delivers only after it moves the message from `queued` to
+`sending` in one conditional update, and only that same job may pick it up again on a retry.
 
 ## Backups
 

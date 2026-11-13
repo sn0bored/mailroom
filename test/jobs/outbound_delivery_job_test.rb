@@ -55,4 +55,79 @@ class OutboundDeliveryJobTest < ActiveSupport::TestCase
     assert_equal "Postmark::TimeoutError", @record.error
     assert_equal 1, AuditEvent.where(action: "outbound.failed", target_id: @record.id).count
   end
+
+  test "a non-transport error before delivery marks the message failed" do
+    OutboundMailer.stub(:compose, ->(*) { raise ArgumentError, "private body" }) do
+      perform_enqueued_jobs(only: OutboundDeliveryJob) { OutboundDeliveryJob.perform_later(@record.id) }
+    end
+    assert_equal "failed", @record.reload.status
+    assert_equal "ArgumentError", @record.error
+    assert_empty ActionMailer::Base.deliveries
+  end
+
+  test "two jobs racing on one row deliver it exactly once" do
+    second = OutboundDeliveryJob.new(@record.id)
+    compose = OutboundMailer.method(:compose)
+    raced = false
+    # The second job runs once, while the first holds the claim and is about to deliver.
+    race = ->(record) { second.perform_now unless raced; raced = true; compose.call(record) }
+    OutboundMailer.stub(:compose, race) do
+      OutboundDeliveryJob.perform_now(@record.id)
+    end
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal "sent", @record.reload.status
+    assert_not_equal second.job_id, @record.delivery_job_id
+  end
+
+  test "duplicate enqueues for one row deliver it exactly once" do
+    perform_enqueued_jobs(only: OutboundDeliveryJob) do
+      3.times { OutboundDeliveryJob.perform_later(@record.id) }
+    end
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal 1, AuditEvent.where(action: "outbound.sent", target_id: @record.id).count
+  end
+
+  test "a retry after a transport error reclaims its own row and delivers" do
+    attempts = 0
+    compose = OutboundMailer.method(:compose)
+    flaky = ->(record) { attempts += 1; attempts == 1 ? raise(Postmark::TimeoutError.new(StandardError.new("private"))) : compose.call(record) }
+    job = OutboundDeliveryJob.new(@record.id)
+    OutboundMailer.stub(:compose, flaky) do
+      perform_enqueued_jobs(only: OutboundDeliveryJob) { job.enqueue }
+    end
+    assert_equal 2, attempts
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    @record.reload
+    assert_equal "sent", @record.status
+    assert_equal job.job_id, @record.delivery_job_id
+  end
+
+  test "another job cannot take over a row that is being delivered" do
+    @record.update!(status: "sending", delivery_job_id: "another-job")
+    OutboundDeliveryJob.perform_now(@record.id)
+    assert_empty ActionMailer::Base.deliveries
+    assert_equal "sending", @record.reload.status
+    assert_equal "another-job", @record.delivery_job_id
+  end
+
+  test "a message that was delivered stays sent when the bookkeeping after it fails" do
+    [ Errno::ECONNRESET, RuntimeError ].each do |error_class|
+      ActionMailer::Base.deliveries.clear
+      record = OutboundMessage.create!(api_key: @key, status: "queued", from_address: "sender@example.org",
+        to_addresses: [ "recipient@example.net" ], subject: "Subject", text_body: "Body")
+      Audit.stub(:record, ->(*, **) { raise error_class, "audit down" }) do
+        perform_enqueued_jobs(only: OutboundDeliveryJob) { OutboundDeliveryJob.perform_later(record.id) }
+      end
+      assert_equal 1, ActionMailer::Base.deliveries.size, error_class.name
+      record.reload
+      assert_equal "sent", record.status, error_class.name
+      assert record.sent_at
+      assert_nil record.error
+    end
+  end
+
+  test "a missing message is ignored" do
+    assert_nothing_raised { OutboundDeliveryJob.perform_now(0) }
+    assert_empty ActionMailer::Base.deliveries
+  end
 end

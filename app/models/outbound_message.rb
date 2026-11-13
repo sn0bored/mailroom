@@ -4,7 +4,8 @@ class OutboundMessage < ApplicationRecord
   attribute :to_addresses, :json, default: -> { [] }
   attribute :cc_addresses, :json, default: -> { [] }
   attribute :bcc_addresses, :json, default: -> { [] }
-  STATUSES = %w[draft queued sent failed].freeze
+  # draft -> queued -> sending (claimed by a delivery job) -> sent | failed
+  STATUSES = %w[draft queued sending sent failed].freeze
 
   belongs_to :api_key, optional: true
   belongs_to :user, optional: true
