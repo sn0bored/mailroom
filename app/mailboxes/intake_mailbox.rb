@@ -33,9 +33,25 @@ class IntakeMailbox < ApplicationMailbox
 
   def duplicate_of(resolution)
     id = mail.message_id.presence or return nil
-    Message.where(rfc822_message_id: id).where("received_at > ?", DUPLICATE_WINDOW.ago).first
-  rescue StandardError
+    prior = Message.where(rfc822_message_id: id)
+                   .where("received_at > ?", DUPLICATE_WINDOW.ago)
+                   .order(:received_at, :id).to_a
+    return nil if prior.empty?
+    # Collapse into the copy that already went where this one would — or, when this delivery
+    # has no forward target of its own, the earliest row (nothing to forward, nothing to lose).
+    # A distinct, not-yet-forwarded target is a genuine separate delivery: it gets its own
+    # stored message and forwarded copy rather than being merged (and dropped) as a duplicate.
+    target = forward_target_for(resolution)
+    return prior.first if target.blank?
+    prior.find { |m| m.domain&.forward_target == target }
+  rescue StandardError => e
+    Rails.logger.warn("[intake] duplicate check failed for inbound_email #{inbound_email.id}: #{e.class}")
     nil
+  end
+
+  def forward_target_for(resolution)
+    domain = resolution.primary && Domain.for_address(resolution.primary)
+    domain&.forward_target
   end
 
   def merge_duplicate(existing, resolution)

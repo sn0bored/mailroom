@@ -136,6 +136,54 @@ class IntakeMailboxTest < ActiveSupport::TestCase
     assert first.routing_trace.any? { |t| t["header"] == "duplicate" }
   end
 
+  test "a copy to a second owned domain with a distinct forward target is not dropped as a duplicate" do
+    other = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    second_source = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+    second = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + second_source)
+
+    assert_equal @domain, first.domain
+    assert second, "the second domain's copy is stored, not merged away"
+    assert_equal other, second.domain
+    assert_equal "queued", second.forward_status
+    assert_equal 2, Message.count
+    assert_enqueued_with(job: ForwardCopyJob, args: [ first.id ])
+    assert_enqueued_with(job: ForwardCopyJob, args: [ second.id ])
+  end
+
+  test "a re-delivery to one of several distinct-target domains merges into that domain's row" do
+    org_domain = @domain
+    com_domain = Domain.create!(name: "example.com", forward_copy_to: "other@example.com")
+    to_com = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+
+    org = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    com = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + to_com)
+    # A third webhook: the same Message-ID delivered to example.com again (a provider re-delivery).
+    # Vary only the ignored provider address so the raw bytes differ and ActionMailbox's own
+    # checksum dedup lets it through to our routing-level dedup.
+    redelivery = receive_source("X-Original-To: def456relay@inbound.postmarkapp.com\n" + to_com)
+
+    assert_equal org_domain, org.domain
+    assert_equal com_domain, com.domain
+    assert_nil redelivery, "the re-delivery is a true duplicate of the example.com copy"
+    assert_equal 2, Message.count
+    assert com.reload.routing_trace.any? { |t| t["header"] == "duplicate" },
+      "the duplicate merged into the matching example.com row"
+    assert_not org.reload.routing_trace.any? { |t| t["header"] == "duplicate" },
+      "the unrelated example.org row is left untouched"
+  end
+
+  test "a duplicate to a second domain sharing the same forward target still merges into one row" do
+    Domain.create!(name: "example.com", forward_copy_to: "owner@example.net")
+    first = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source)
+    second_source = forwarded_source.sub("X-Original-To: <hello@example.org>", "X-Original-To: <hi@example.com>")
+    second = receive_source("X-Original-To: abc123hash@inbound.postmarkapp.com\n" + second_source)
+
+    assert_nil second, "same forward destination is a true duplicate, not a second copy"
+    assert_equal 1, Message.count
+    assert_enqueued_with(job: ForwardCopyJob, args: [ first.id ])
+  end
+
   test "our own instance header marks a loop and skips forwarding" do
     source = "X-Mailroom-Instance: #{Mailroom.instance_id}\nX-Original-To: abc123hash@inbound.postmarkapp.com\n" + forwarded_source
     message = receive_source(source)
