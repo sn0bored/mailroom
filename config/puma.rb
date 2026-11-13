@@ -30,17 +30,32 @@ threads threads_count, threads_count
 # Mailroom's listeners. MAILROOM_PORT (default 3100) is the internal listener: owner UI, MCP and API.
 # MAILROOM_PUBLIC_PORT is the public listener: the Postmark webhook and /up, nothing else
 # (Mailroom::IngressGate decides by the listener a connection arrived on). Both bind loopback only.
-# Production refuses to boot without the public one (config/initializers/preflight.rb).
-# `rails server -b/-p` replaces these binds, which is why bin/mailroom-server starts Puma directly.
+# `rails server -b/-p`, PORT and Thruster replace these binds, which is why bin/mailroom-server starts
+# Puma directly, and why production refuses to start on anything else (the check below).
 internal_port = ENV.fetch("MAILROOM_PORT", "3100")
 public_port = ENV["MAILROOM_PUBLIC_PORT"].to_s.strip
 if public_port.empty?
   # Development: one listener, the internal one.
-  port ENV.fetch("PORT", internal_port)
+  port ENV.fetch("PORT", internal_port), "127.0.0.1"
 else
   bind "tcp://127.0.0.1:#{internal_port}"
   bind "tcp://127.0.0.1:#{public_port}"
 end
+
+# In production, refuse to listen anywhere but the two loopback listeners: once on the configured binds
+# before anything is opened, and again on the sockets Puma actually opened.
+require_relative "listener_check"
+Puma::Plugins.register("mailroom_listeners", Class.new(Puma::Plugin) do
+  def start(launcher)
+    return unless [ launcher.options[:environment], ENV["RAILS_ENV"] ].include?("production")
+    refuse = ->(problem) { abort "Mailroom refuses to start: #{problem}" if problem }
+    refuse.call(Mailroom::ListenerCheck.problem(launcher.options[:binds]))
+    launcher.events.after_booted do
+      refuse.call(Mailroom::ListenerCheck.problem(launcher.binder.ios.map { |io| Mailroom::ListenerCheck.bind_for(io) }))
+    end
+  end
+end)
+plugin :mailroom_listeners
 
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart
