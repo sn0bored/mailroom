@@ -101,8 +101,33 @@ Claude Code: `claude mcp add --transport http mailroom https://<host>:8443/mcp -
 ## For apps
 
 `POST /api/v1/send` with a `mail:send` key: `{ "from", "to", "subject", "text", "html"?, "cc"?, "bcc"?,
-"reply_to"?, "in_reply_to"?, "idempotency_key"? }`. The from-domain must be marked send-enabled and
-allowed for that key. `GET /api/v1/health` needs no key.
+"reply_to"?, "in_reply_to"?, "idempotency_key"? }`. `from` is one address, optionally with a display
+name (`"Example App <hello@example.org>"`). Its domain must be marked send-enabled and allowed for that
+key. `to`, `cc` and `bcc` take a string or an array. `GET /api/v1/health` needs no key.
+
+Every send response is the same object, which never includes subjects, addresses or bodies:
+
+```json
+{ "id": 42, "status": "queued", "idempotency_key": "order-1001", "error": null,
+  "created_at": "2026-01-01T12:00:00Z", "sent_at": null, "provider_message_id": null }
+```
+
+| HTTP | meaning |
+|---|---|
+| `202` | accepted and queued for delivery |
+| `200` | `"idempotent": true`: this key already sent a message with that `idempotency_key`; it is returned and nothing is sent again |
+| `403` | refused by the sending rules (`reason` says which, e.g. the domain is not send-enabled); nothing is stored |
+| `422` | invalid request (`details` lists the problems, e.g. a `from` that is not one address); nothing is stored |
+
+Idempotency keys are scoped to the API key, and only an accepted message is stored under one. A refused
+or invalid request leaves nothing behind, so retrying it with the same key is evaluated again from
+scratch: once the owner enables sending for the domain, the same retry is queued. Retrying a key that
+was accepted never sends twice.
+
+`GET /api/v1/send/:id` with a `mail:send` key returns that object for one of the key's own messages.
+`status` goes from `queued` to `sent` (with `sent_at` and the provider's message id) or `failed` (with
+the error class in `error`). A message sent with another key answers `404`, the same as one that does
+not exist.
 
 ## Backups
 

@@ -47,6 +47,17 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
+  test "a built message is stored only when the rules pass" do
+    refused = OutboundMessage.new(from_address: "sender@example.net", to_addresses: [ "recipient@example.net" ])
+    assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(refused) }
+    assert refused.new_record?
+
+    accepted = OutboundMessage.new(from_address: "Example Sender <sender@example.org>", to_addresses: [ "recipient@example.net" ])
+    assert_enqueued_jobs(1, only: OutboundDeliveryJob) { Outbound::Send.call(accepted) }
+    assert accepted.persisted?
+    assert_equal "queued", accepted.reload.status
+  end
+
   test "user actor persists for the asynchronous audit" do
     user = User.create!(email_address: "owner@example.org", password: "test-password")
     Outbound::Send.call(@record, actor: user)
@@ -67,12 +78,20 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
-  test "probe requires a configured and enabled sender" do
-    Mailroom.stub(:forward_sender, nil) do
-      assert_equal "no sender configured", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+  test "probe requires a configured and enabled sender and leaves no draft when refused" do
+    assert_no_difference "OutboundMessage.count" do
+      Mailroom.stub(:forward_sender, nil) do
+        assert_equal "no sender configured", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+      end
+      Mailroom.stub(:forward_sender, "sender@example.net") do
+        assert_match "probe sender's domain", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+      end
     end
-    Mailroom.stub(:forward_sender, "sender@example.net") do
-      assert_match "probe sender's domain", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+  end
+
+  test "probe accepts a sender with a display name" do
+    Mailroom.stub(:forward_sender, "Mailroom <sender@example.org>") do
+      assert_equal "queued", Outbound::Probe.call(Domain.create!(name: "example.net")).status
     end
   end
 end
