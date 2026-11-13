@@ -418,7 +418,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to domain_path(@domain)
       assert_equal "Probe queued.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Probe.stub(:call, ->(*) { raise error, "Probe unavailable" }) do
         post probe_domain_path(@domain)
         assert_redirected_to domain_path(@domain)
@@ -478,13 +478,40 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to draft_path(draft)
       assert_equal "Message queued for sending.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Send.stub(:call, ->(*) { raise error, "Sending unavailable" }) do
         post deliver_draft_path(draft)
         assert_redirected_to draft_path(draft)
         assert_equal "Sending unavailable", flash[:alert]
       end
     end
+  end
+
+  test "a draft whose delivery cannot be queued flashes the reason and shows it on the draft" do
+    @domain.update!(send_enabled: true)
+    draft = create_draft
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      post deliver_draft_path(draft)
+    end
+    assert_redirected_to draft_path(draft)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
+    assert_equal "draft", draft.reload.status
+    get draft_path(draft)
+    assert_select ".draft-error", "could not queue for delivery: SolidQueue::Job::EnqueueError"
+    assert_select "form[action=?]", deliver_draft_path(draft)
+  end
+
+  test "a probe that cannot be queued flashes the reason and leaves no row" do
+    @domain.update!(send_enabled: true)
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    Mailroom.stub(:forward_sender, "sender@example.org") do
+      OutboundDeliveryJob.stub(:perform_later, queue_down) do
+        assert_no_difference("OutboundMessage.count") { post probe_domain_path(@domain) }
+      end
+    end
+    assert_redirected_to domain_path(@domain)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
   end
 
   test "sent and queued drafts cannot be edited or resent" do

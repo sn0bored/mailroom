@@ -62,7 +62,8 @@ class OutboundSendTest < ActiveSupport::TestCase
     record = OutboundMessage.new(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
     OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
       assert_no_difference("OutboundMessage.count") do
-        assert_raises(SolidQueue::Job::EnqueueError) { Outbound::Send.call(record) }
+        error = assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(record) }
+        assert_kind_of SolidQueue::Job::EnqueueError, error.cause
       end
     end
   end
@@ -70,7 +71,7 @@ class OutboundSendTest < ActiveSupport::TestCase
   test "an owner draft whose enqueue fails stays a draft and carries the error" do
     user = User.create!(email_address: "owner@example.org", password: "test-password")
     OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
-      assert_raises(SolidQueue::Job::EnqueueError) { Outbound::Send.call(@record, actor: user) }
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record, actor: user) }
     end
     @record.reload
     assert_equal "draft", @record.status
@@ -81,7 +82,7 @@ class OutboundSendTest < ActiveSupport::TestCase
   test "an existing message goes back to the status it had, not to draft" do
     @record.update!(status: "queued")
     OutboundDeliveryJob.stub(:perform_later, false) do
-      assert_raises(ActiveJob::EnqueueError) { Outbound::Send.call(@record) }
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record) }
     end
     assert_equal "queued", @record.reload.status
     assert_equal "could not queue for delivery: ActiveJob::EnqueueError", @record.error
@@ -122,7 +123,7 @@ class OutboundSendTest < ActiveSupport::TestCase
     Mailroom.stub(:forward_sender, "sender@example.org") do
       OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
         assert_no_difference("OutboundMessage.count") do
-          assert_raises(SolidQueue::Job::EnqueueError) { Outbound::Probe.call(Domain.create!(name: "example.net")) }
+          assert_raises(Outbound::Send::NotQueued) { Outbound::Probe.call(Domain.create!(name: "example.net")) }
         end
       end
     end

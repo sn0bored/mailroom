@@ -38,7 +38,7 @@ class DomainsController < ApplicationController
   def probe
     Outbound::Probe.call(@domain, actor: Current.user)
     redirect_to @domain, notice: "Probe queued."
-  rescue Outbound::Send::NotAllowed, NotImplementedError => error
+  rescue Outbound::Send::NotAllowed, Outbound::Send::NotQueued, NotImplementedError => error
     redirect_to @domain, alert: error.message.presence || "Probe sending is not available yet."
   end
 

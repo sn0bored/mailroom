@@ -1,6 +1,8 @@
 module Outbound
   class Send
     class NotAllowed < StandardError; end
+    # The delivery job could not be enqueued; the message is back to its state before the call.
+    class NotQueued < StandardError; end
 
     def self.call(outbound_message, actor: nil)
       record = outbound_message
@@ -30,7 +32,7 @@ module Outbound
     end
 
     # The job is enqueued outside the row's database (Solid Queue keeps its own), so the two cannot
-    # share a transaction. When the enqueue fails, undo the queued status before re-raising:
+    # share a transaction. When the enqueue fails, undo the queued status and raise NotQueued:
     # otherwise the row claims a delivery no job will make, and an API retry with the same
     # idempotency key would replay it as queued. A message that did not exist before the call is
     # removed, so a retry is judged from scratch; an existing one (an owner's draft) is never
@@ -44,12 +46,13 @@ module Outbound
       enqueued = OutboundDeliveryJob.perform_later(record.id) { |job| enqueue_error = job.enqueue_error }
       raise enqueue_error || ActiveJob::EnqueueError.new("delivery job was not enqueued") unless enqueued
     rescue StandardError => error
+      reason = "could not queue for delivery: #{error.class.name}"
       if was_new
         record.destroy!
       else
-        record.update_columns(status: previous_status, error: "could not queue for delivery: #{error.class.name}")
+        record.update_columns(status: previous_status, error: reason)
       end
-      raise
+      raise NotQueued, reason
     end
     private_class_method :enqueue_delivery
   end

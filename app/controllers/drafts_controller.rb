@@ -35,7 +35,7 @@ class DraftsController < ApplicationController
     return redirect_to draft_path(@draft), alert: "Only drafts can be sent." unless @draft.draft?
     Outbound::Send.call(@draft, actor: Current.user)
     redirect_to draft_path(@draft), notice: "Message queued for sending."
-  rescue Outbound::Send::NotAllowed, NotImplementedError => error
+  rescue Outbound::Send::NotAllowed, Outbound::Send::NotQueued, NotImplementedError => error
     redirect_to draft_path(@draft), alert: error.message.presence || "Sending is not available yet."
   end
 
