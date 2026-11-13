@@ -23,7 +23,7 @@ class IngressGateTest < ActionDispatch::IntegrationTest
     [ :post, "/rails/active_storage/direct_uploads" ],
     [ :get, "/rails/active_storage/blobs/redirect/x/file.txt" ],
     [ :get, "/session/new" ], [ :post, "/session" ], [ :get, "/" ],
-    [ :post, "/mcp" ], [ :get, "/mcp" ], [ :get, "/api/v1/health" ], [ :post, "/api/v1/send" ]
+    [ :post, "/mcp" ], [ :get, "/mcp" ], [ :delete, "/mcp" ], [ :get, "/api/v1/health" ], [ :post, "/api/v1/send" ]
   ].freeze
 
   def assert_gated

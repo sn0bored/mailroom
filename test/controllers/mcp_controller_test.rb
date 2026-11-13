@@ -114,6 +114,15 @@ class McpControllerTest < ActionDispatch::IntegrationTest
     assert_equal({}, body.last["result"])
   end
 
+  test "GET and DELETE are 405 with Allow: POST and no body, without a key" do
+    [ :get, :delete ].each do |verb|
+      process verb, "/mcp"
+      assert_response :method_not_allowed
+      assert_equal "POST", response.headers["Allow"]
+      assert_empty response.body
+    end
+  end
+
   test "notifications get no body" do
     post "/mcp", params: { jsonrpc: "2.0", method: "notifications/initialized" }.to_json,
                  headers: { "Content-Type" => "application/json", "Authorization" => "Bearer #{@read_token}" }
