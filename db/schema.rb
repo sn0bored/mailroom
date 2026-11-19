@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_06_040000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_13_130000) do
   create_table "action_mailbox_inbound_emails", force: :cascade do |t|
     t.integer "status", default: 0, null: false
     t.string "message_id", null: false
@@ -97,6 +97,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_06_040000) do
     t.datetime "updated_at", null: false
     t.string "forward_mode", default: "all", null: false
     t.json "forward_addresses"
+    t.string "catch_all_mailbox"
+    t.string "catch_all_mx_host"
     t.index ["name"], name: "index_domains_on_name", unique: true
   end
 
@@ -129,6 +131,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_06_040000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "blocked", default: false, null: false
+    t.string "raw_body_digest"
+    t.string "forward_job_id"
+    t.integer "forward_attempt"
     t.index ["domain_id", "received_at"], name: "index_messages_on_domain_id_and_received_at"
     t.index ["domain_id"], name: "index_messages_on_domain_id"
     t.index ["inbound_email_id"], name: "index_messages_on_inbound_email_id", unique: true
@@ -159,6 +164,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_06_040000) do
     t.datetime "sent_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "delivery_job_id"
+    t.integer "delivery_attempt"
     t.index ["api_key_id", "idempotency_key"], name: "index_outbound_messages_on_api_key_id_and_idempotency_key", unique: true, where: "idempotency_key IS NOT NULL"
     t.index ["api_key_id"], name: "index_outbound_messages_on_api_key_id"
     t.index ["kind"], name: "index_outbound_messages_on_kind"

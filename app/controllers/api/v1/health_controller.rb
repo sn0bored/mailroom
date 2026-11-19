@@ -6,7 +6,8 @@ module Api
       def show
         render json: { ok: true, version: Mailroom::VERSION,
           last_inbound_at: Message.maximum(:received_at),
-          queued_outbound: OutboundMessage.where(status: "queued").count,
+          # Outbound mail not finished yet: waiting for a job, or being delivered.
+          queued_outbound: OutboundMessage.where(status: %w[queued sending]).count,
           domains: Domain.active.count }
       end
     end

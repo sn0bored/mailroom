@@ -8,6 +8,7 @@
     <dt>Domain</dt><dd><%= @message.domain&.name || "unrouted" %></dd>
     <dt>Routed via</dt><dd><%= @message.routed_via.presence || "Unavailable" %></dd>
     <dt>Spam score</dt><dd><%= @message.spam_score || "Unavailable" %></dd>
+    <dt>Sender check</dt><dd><%= @message.sender_authentication.summary %></dd>
     <dt>Blocked</dt><dd><%= @message.blocked? ? "Yes" : "No" %></dd>
     <dt>Forward status</dt><dd><%= @message.forward_status || "Unavailable" %></dd>
     <dt>Matched addresses</dt><dd><%= Array(@message.matched_addresses).join(", ").presence || "None" %></dd>

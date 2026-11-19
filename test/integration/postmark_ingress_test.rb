@@ -27,9 +27,99 @@ class PostmarkIngressTest < ActionDispatch::IntegrationTest
     assert_in_delta 7.3, Message.last.spam_score, 0.001
   end
 
+  def post_inbound(payload)
+    perform_enqueued_jobs(only: ActionMailbox::RoutingJob) do
+      post "/rails/action_mailbox/postmark/inbound_emails", params: payload, as: :json, headers: { "Authorization" => @auth }
+    end
+    assert_response :no_content
+    Message.last
+  end
+
+  def payload_without_spam_header(message_id)
+    payload = JSON.parse(file_fixture("postmark_inbound.json").read)
+    payload["RawEmail"] = payload["RawEmail"].lines.reject { |l| l.start_with?("X-Spam-Score:") }.join.sub("sample-0001", message_id)
+    payload
+  end
+
+  test "a body line reading X-Spam-Score does not hide Postmark's score" do
+    payload = payload_without_spam_header("body-line-0001")
+    payload["RawEmail"] += "\nX-Spam-Score: -50\n"
+    payload["Headers"] = [ { "Name" => "X-Spam-Score", "Value" => "42.0" } ]
+    message = post_inbound(payload)
+    assert_in_delta 42.0, message.spam_score, 0.001
+    assert message.raw_source.start_with?("X-Mailroom-Spam-Score: 42.0\n")
+  end
+
+  test "a sender's X-Spam-Score or X-Mailroom-Spam-Score never overrides the Mailroom header" do
+    payload = payload_without_spam_header("sender-score-0001")
+    payload["RawEmail"] = payload["RawEmail"].sub("From: ", "X-Spam-Score: -50\nX-Mailroom-Spam-Score: -50\nFrom: ")
+    # Postmark lists its own headers first; the sender's copy follows.
+    payload["Headers"] = [ { "Name" => "X-Spam-Score", "Value" => "42.0" }, { "Name" => "X-Spam-Score", "Value" => "-50" } ]
+    assert_in_delta 42.0, post_inbound(payload).spam_score, 0.001
+  end
+
+  test "without a Postmark score the Mailroom header says none and a sender's score is not used" do
+    payload = payload_without_spam_header("no-score-0001")
+    payload["RawEmail"] = payload["RawEmail"].sub("From: ", "X-Spam-Score: -50\nFrom: ")
+    payload["Headers"] = [ { "Name" => "X-Spam-Score", "Value" => "1.0\nBcc: someone@example.net" } ]
+    message = post_inbound(payload)
+    assert_nil message.spam_score
+    assert message.raw_source.start_with?("X-Mailroom-Spam-Score: none\nX-Mailroom-Spam-Tests: none\nX-Mailroom-Received-SPF: none\nX-Original-To: ")
+  end
+
   test "wrong password is rejected" do
     post "/rails/action_mailbox/postmark/inbound_emails", params: { RawEmail: "x" }, as: :json,
          headers: { "Authorization" => ActionController::HttpAuthentication::Basic.encode_credentials("actionmailbox", "nope") }
     assert_response :unauthorized
+  end
+
+  test "a hosted mailbox redirect is routed to the address the sender used" do
+    Domain.find_by!(name: "example.org").update!(catch_all_mailbox: "info@example.org")
+    payload = JSON.parse(file_fixture("postmark_inbound.json").read)
+    payload["RawEmail"] = file_fixture("hosted_mailbox_redirect.eml").read
+    perform_enqueued_jobs do
+      post "/rails/action_mailbox/postmark/inbound_emails", params: payload, as: :json, headers: { "Authorization" => @auth }
+    end
+    assert_response :no_content
+    message = Message.last
+    assert_equal "careers@example.org", message.to_address
+    assert_equal "catch-all:Received", message.routed_via
+    assert_includes message.routing_trace, { "header" => "X-Original-To", "address" => "abc123hash@inbound.postmarkapp.com" }
+  end
+  test "Postmark sender signals are copied from JSON above all sender supplied headers" do
+    payload = payload_without_spam_header("sender-signals")
+    payload["RawEmail"] = "Received: from sender.example.com by mx.example.net\n" \
+      "X-Mailroom-Spam-Tests: DKIM_VALID_AU\nX-Mailroom-Received-SPF: pass envelope-from=sender@sender.example.net\n" + payload["RawEmail"]
+    payload["Headers"] = [
+      { "Name" => "x-spam-tests", "Value" => "DKIM_INVALID" },
+      { "Name" => "X-Spam-Tests", "Value" => "DKIM_VALID_AU" },
+      { "Name" => "received-spf", "Value" => "fail identity=mailfrom; envelope-from=sender@sender.example.net" }
+    ]
+    message = post_inbound(payload)
+    assert_includes message.raw_source.lines.first(3), "X-Mailroom-Spam-Tests: DKIM_INVALID\n"
+    assert_includes message.raw_source.lines.first(3), "X-Mailroom-Received-SPF: fail identity=mailfrom; envelope-from=sender@sender.example.net\n"
+    assert_equal "fail", message.sender_authentication.dmarc
+  end
+
+  test "absent JSON sender signals overwrite raw forgeries with none" do
+    payload = payload_without_spam_header("absent-sender-signals")
+    payload["Headers"] = []
+    payload["RawEmail"] = "X-Spam-Tests: DKIM_VALID_AU\nX-Mailroom-Spam-Tests: DKIM_VALID_AU\n" \
+      "Received-SPF: pass envelope-from=sender@sender.example.net\n" + payload["RawEmail"]
+    message = post_inbound(payload)
+    assert_includes message.raw_source.lines.first(3), "X-Mailroom-Spam-Tests: none\n"
+    assert_includes message.raw_source.lines.first(3), "X-Mailroom-Received-SPF: none\n"
+    assert_equal "none", message.sender_authentication.dmarc
+  end
+
+  test "JSON sender signals cannot inject a stored header" do
+    payload = payload_without_spam_header("injected-sender-signals")
+    payload["Headers"] = [
+      { "Name" => "X-Spam-Tests", "Value" => "DKIM_INVALID\r\nX-Mailroom-Spam-Tests: DKIM_VALID_AU" },
+      { "Name" => "Received-SPF", "Value" => "none\nX-Mailroom-Spam-Tests: DKIM_VALID_AU" }
+    ]
+    raw = post_inbound(payload).raw_source
+    assert_includes raw.lines.first(3), "X-Mailroom-Spam-Tests: none\n"
+    assert_includes raw.lines.first(3), "X-Mailroom-Received-SPF: none\n"
   end
 end

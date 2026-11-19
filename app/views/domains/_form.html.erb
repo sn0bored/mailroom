@@ -1,6 +1,10 @@
 <%= render "shared/errors", record: @domain %>
 <%= form_with model: @domain do |form| %>
   <%= form.label :name, "Domain name" %><%= form.text_field :name, required: true, placeholder: "example.org" %>
+  <%= form.label :catch_all_mailbox, "Hosted catch-all mailbox" %><%= form.email_field :catch_all_mailbox, placeholder: "info@example.org", aria: { describedby: "catch-all-mailbox-help" } %>
+  <p id="catch-all-mailbox-help" class="help">Leave blank unless a hosted mailbox on this domain auto-forwards its mail here; Mailroom then shows the address each message was sent to, not that mailbox.</p>
+  <%= form.label :catch_all_mx_host, "Mail host's MX server" %><%= form.text_field :catch_all_mx_host, placeholder: "mx1.example.net", aria: { describedby: "catch-all-mx-host-help" } %>
+  <p id="catch-all-mx-host-help" class="help">Optional: the server named after "by" in the Received line where your mail host first took the message; Mailroom then trusts that line and ignores anything the sender wrote below it.</p>
   <fieldset>
     <legend>Forward copies</legend>
     <% [["all", "All messages"], ["listed", "Only these addresses"], ["off", "Off"]].each do |value, label| %>

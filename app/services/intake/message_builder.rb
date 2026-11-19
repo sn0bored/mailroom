@@ -22,11 +22,11 @@ module Intake
         to_address: @resolution.primary,
         matched_addresses: @resolution.matches,
         routed_via: @resolution.routed_via,
-        routing_trace: @resolution.trace,
+        routing_trace: @resolution.trace + from_trace,
         rfc822_message_id: @mail.message_id.presence,
         in_reply_to: Array(@mail.in_reply_to).first.presence,
         references_header: Array(@mail.references).join(" ").presence,
-        from_address: Array(@mail.from).first.to_s.downcase.presence,
+        from_address: Array(from_field&.addresses).first.to_s.downcase.presence,
         from_name: display_name,
         reply_to: Array(@mail.reply_to).first.to_s.downcase.presence,
         subject: utf8(@mail.subject),
@@ -59,8 +59,20 @@ module Intake
 
     private
 
+    def from_values
+      @from_values ||= MailHeaders.fields(@inbound_email.source).filter_map { |name, value| value if name == "from" }
+    end
+
+    def from_field
+      @from_field ||= from_values.size > 1 ? Mail::Field.new("From", from_values.first) : @mail[:from]
+    end
+
+    def from_trace
+      from_values.size > 1 ? [ { "header" => "multiple_from", "address" => from_values.size.to_s } ] : []
+    end
+
     def display_name
-      name = @mail[:from]&.display_names&.first
+      name = from_field&.display_names&.first
       utf8(name).presence
     rescue StandardError
       nil
@@ -99,9 +111,13 @@ module Intake
       Rails::HTML5::FullSanitizer.new.sanitize(utf8(html)).to_s.squish
     end
 
+    # The ingress always prepends X-Mailroom-Spam-Score, so the topmost one is the provider's verdict
+    # ("none": no score). A sender can write X-Spam-Score, or another X-Mailroom-Spam-Score further
+    # down; X-Spam-Score is read only when no Mailroom header exists (mail that skipped that ingress).
     def spam_score
-      value = header("X-Spam-Score") || header("X-Mailroom-Spam-Score")
-      value.present? ? Float(value.strip) : nil
+      owned = header("X-Mailroom-Spam-Score")
+      value = owned.nil? ? header("X-Spam-Score") : owned
+      value.present? && value.strip != "none" ? Float(value.strip) : nil
     rescue ArgumentError, TypeError
       nil
     end

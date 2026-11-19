@@ -6,7 +6,6 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
 
   setup do
     Rack::Attack.reset!
-    host! "example.org:8443"
     @user = User.create!(email_address: "owner@example.org", password: "test-password")
     @domain = Domain.create!(name: "example.org")
     sign_in_as(@user)
@@ -342,6 +341,19 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_select "details pre", text: /Return-Path:/
     assert_select "details pre", text: /This message was sent/, count: 0
     assert_select "a[href=?]", new_draft_path(message_id: message.id)
+    assert_select "dd", text: "Unavailable"
+  end
+
+  test "owner pages send a strict content security policy with a nonce for the importmap" do
+    get messages_path
+    policy = response.headers["Content-Security-Policy"]
+    [ "default-src 'self'", "object-src 'none'", "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'",
+      "img-src 'self' data:" ].each { |directive| assert_includes policy, directive }
+    assert_no_match(/unsafe-inline|unsafe-eval|\*/, policy)
+    nonce = policy[/script-src 'self' 'nonce-([^']+)'/, 1]
+    assert nonce.present?
+    assert_select "script[type=importmap][nonce=?]", nonce
+    assert_select "meta[name=csp-nonce][content=?]", nonce
   end
 
   test "unavailable raw source has a readable fallback" do
@@ -377,6 +389,16 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_equal "file content", response.body
     other = create_message
     get message_attachment_path(other, attachment)
+    assert_response :not_found
+  end
+
+  test "Active Storage's own routes are not drawn" do
+    message = create_message
+    message.attachments.attach(io: StringIO.new("file content"), filename: "sample.txt", content_type: "text/plain")
+    blob = message.attachments.first.blob
+    get "/rails/active_storage/blobs/redirect/#{blob.signed_id}/sample.txt"
+    assert_response :not_found
+    post "/rails/active_storage/direct_uploads", params: { blob: { filename: "x.txt", byte_size: 1, checksum: "x", content_type: "text/plain" } }
     assert_response :not_found
   end
 
@@ -418,7 +440,7 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to domain_path(@domain)
       assert_equal "Probe queued.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Probe.stub(:call, ->(*) { raise error, "Probe unavailable" }) do
         post probe_domain_path(@domain)
         assert_redirected_to domain_path(@domain)
@@ -478,13 +500,77 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
       assert_redirected_to draft_path(draft)
       assert_equal "Message queued for sending.", flash[:notice]
     end
-    [ NotImplementedError, Outbound::Send::NotAllowed ].each do |error|
+    [ NotImplementedError, Outbound::Send::NotAllowed, Outbound::Send::NotQueued ].each do |error|
       Outbound::Send.stub(:call, ->(*) { raise error, "Sending unavailable" }) do
         post deliver_draft_path(draft)
         assert_redirected_to draft_path(draft)
         assert_equal "Sending unavailable", flash[:alert]
       end
     end
+  end
+
+  test "drafts show every recipient and Cc and Bcc can be edited" do
+    draft = create_draft(cc_addresses: [ "copy@example.net" ], bcc_addresses: [ "blind@example.net" ])
+    get drafts_path
+    assert_select "td[data-label=Cc]", "copy@example.net"
+    assert_select "td[data-label=Bcc]", "blind@example.net"
+    get draft_path(draft)
+    assert_select ".draft-cc", "copy@example.net"
+    assert_select ".draft-bcc", "blind@example.net"
+    assert_select "input[name='draft[cc]'][value='copy@example.net']"
+    assert_select "input[name='draft[bcc]'][value='blind@example.net']"
+
+    patch draft_path(draft), params: { draft: draft_attributes.merge(cc: "one@example.net, two@example.net", bcc: "") }
+    assert_redirected_to draft_path(draft)
+    draft.reload
+    assert_equal %w[one@example.net two@example.net], draft.cc_addresses
+    assert_empty draft.bcc_addresses
+    get draft_path(draft)
+    assert_select ".draft-bcc", "None"
+
+    patch draft_path(draft), params: { draft: draft_attributes }
+    assert_equal %w[one@example.net two@example.net], draft.reload.cc_addresses
+  end
+
+  test "a reply to a Reply-To that differs from the sender carries a note" do
+    message = create_message(reply_to: "harvest@example.com")
+    draft = create_draft(source_message: message, to_addresses: [ "harvest@example.com" ])
+    get draft_path(draft)
+    assert_select ".reply-to-note", /Reply-To differs from sender: this reply goes to harvest@example.com, but the message came from sender@example.net/
+
+    [ create_draft(source_message: create_message(reply_to: nil), to_addresses: [ "sender@example.net" ]),
+      create_draft(source_message: create_message(reply_to: "sender@example.net"), to_addresses: [ "sender@example.net" ]),
+      create_draft(source_message: message, to_addresses: [ "sender@example.net" ]) ].each do |plain|
+      get draft_path(plain)
+      assert_select ".reply-to-note", count: 0
+    end
+  end
+
+  test "a draft whose delivery cannot be queued flashes the reason and shows it on the draft" do
+    @domain.update!(send_enabled: true)
+    draft = create_draft
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      post deliver_draft_path(draft)
+    end
+    assert_redirected_to draft_path(draft)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
+    assert_equal "draft", draft.reload.status
+    get draft_path(draft)
+    assert_select ".draft-error", "could not queue for delivery: SolidQueue::Job::EnqueueError"
+    assert_select "form[action=?]", deliver_draft_path(draft)
+  end
+
+  test "a probe that cannot be queued flashes the reason and leaves no row" do
+    @domain.update!(send_enabled: true)
+    queue_down = ->(*) { raise SolidQueue::Job::EnqueueError, "database is locked" }
+    Mailroom.stub(:forward_sender, "sender@example.org") do
+      OutboundDeliveryJob.stub(:perform_later, queue_down) do
+        assert_no_difference("OutboundMessage.count") { post probe_domain_path(@domain) }
+      end
+    end
+    assert_redirected_to domain_path(@domain)
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", flash[:alert]
   end
 
   test "sent and queued drafts cannot be edited or resent" do
@@ -555,5 +641,35 @@ class OwnerUiTest < ActionDispatch::IntegrationTest
     assert_equal "sender@example.org", Setting.get("forward_sender")
   ensure
     original.nil? ? ENV.delete("MAILROOM_FORWARD_SENDER") : ENV["MAILROOM_FORWARD_SENDER"] = original
+  end
+
+  test "a hosted catch-all mailbox round trips and changes the setup instruction" do
+    Mailroom.stub(:inbound_address, "inbound@example.net") do
+      get domain_path(@domain)
+      assert_select "input[type=email][name='domain[catch_all_mailbox]'][aria-describedby=catch-all-mailbox-help]"
+      assert_select "#catch-all-mailbox-help", text: /auto-forwards its mail here/
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: " Info@Example.org " } }
+      assert_redirected_to domain_path(@domain)
+      assert_equal "info@example.org", @domain.reload.catch_all_mailbox
+      follow_redirect!
+      assert_select "input[name='domain[catch_all_mailbox]'][value='info@example.org']"
+      assert_select ".setup-line code", text: "info@example.org"
+      assert_select "#domain-forwarder", text: "inbound@example.net"
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "info@example.net" } }
+      assert_response :unprocessable_entity
+      assert_equal "info@example.org", @domain.reload.catch_all_mailbox
+
+      patch domain_path(@domain), params: { domain: { catch_all_mx_host: "MX1.Example.NET" } }
+      assert_equal "mx1.example.net", @domain.reload.catch_all_mx_host
+      follow_redirect!
+      assert_select "input[name='domain[catch_all_mx_host]'][value='mx1.example.net'][aria-describedby=catch-all-mx-host-help]"
+
+      patch domain_path(@domain), params: { domain: { catch_all_mailbox: "", catch_all_mx_host: "" } }
+      assert_nil @domain.reload.catch_all_mailbox
+      follow_redirect!
+      assert_select "#domain-forwarder", text: "*@example.org -> inbound@example.net"
+    end
   end
 end

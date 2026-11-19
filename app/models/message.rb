@@ -30,6 +30,14 @@ class Message < ApplicationRecord
   # The full RFC 822 source as the provider delivered it (Action Mailbox keeps it as a blob).
   def raw_source = inbound_email.source
 
+  # SPF, DKIM and DMARC as the receiving side saw them. Computed from the stored source, not a column,
+  # so mail received before this existed gets a verdict too.
+  def sender_authentication
+    @sender_authentication ||= SenderAuthentication.parse(raw_source, from_address: from_address)
+  rescue StandardError
+    SenderAuthentication.unknown
+  end
+
   def mark_read! = (update!(read_at: Time.current) unless read?)
   def mark_unread! = update!(read_at: nil)
   def archive! = (update!(archived_at: Time.current) unless archived?)

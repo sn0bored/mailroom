@@ -7,11 +7,15 @@ Rails.application.routes.draw do
 
   # Agent surface: JSON-RPC over HTTP, Bearer API key
   post "/mcp", to: "mcp#handle"
+  # Streamable HTTP clients probe GET for an SSE stream and may DELETE to end a session. Mailroom offers
+  # neither, and the MCP transport spec answers both with 405. No key needed: there is nothing behind it.
+  match "/mcp", via: %i[get delete], to: ->(_env) { [ 405, { "allow" => "POST" }, [] ] }
 
   # App surface: Bearer API key
   namespace :api do
     namespace :v1 do
       post "send", to: "send#create"
+      get "send/:id", to: "send#show"
       get "health", to: "health#show"
       get "unread", to: "unread#show"
     end

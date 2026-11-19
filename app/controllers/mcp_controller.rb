@@ -4,14 +4,21 @@ class McpController < ActionController::API
   include ApiKeyAuthentication
 
   PROTOCOL_VERSION = "2025-03-26".freeze
+  # The rate limit (config/initializers/rack_attack.rb) counts HTTP requests, so a batch is one request.
+  MAX_BATCH = 20
 
   before_action :authenticate_api_key!
 
   def handle
     payload = JSON.parse(request.raw_post.presence || "{}")
     if payload.is_a?(Array)
+      return render(json: rpc_error(nil, -32600, "invalid request: empty batch"), status: :bad_request) if payload.empty?
+      if payload.size > MAX_BATCH
+        return render(json: rpc_error(nil, -32600, "invalid request: batch larger than #{MAX_BATCH}"), status: :bad_request)
+      end
       responses = payload.filter_map { |req| respond_to_request(req) }
-      render json: responses
+      # Only notifications: JSON-RPC sends nothing back, and MCP answers 202 with no body.
+      responses.empty? ? head(:accepted) : render(json: responses)
     else
       response_body = respond_to_request(payload)
       response_body ? render(json: response_body) : head(:accepted)
@@ -23,6 +30,7 @@ class McpController < ActionController::API
   private
 
   def respond_to_request(req)
+    return rpc_error(nil, -32600, "invalid request") unless req.is_a?(Hash)
     id = req["id"]
     method = req["method"].to_s
     params = req["params"].is_a?(Hash) ? req["params"] : {}

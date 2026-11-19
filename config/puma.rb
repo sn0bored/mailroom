@@ -27,8 +27,50 @@
 threads_count = ENV.fetch("RAILS_MAX_THREADS", 3)
 threads threads_count, threads_count
 
-# Specifies the `port` that Puma will listen on to receive requests; default is 3000.
-port ENV.fetch("PORT", 3000)
+# Mailroom's listeners. MAILROOM_PORT (default 3100) is the internal listener: owner UI, MCP and API.
+# MAILROOM_PUBLIC_PORT is the public listener: the Postmark webhook and /up, nothing else
+# (Mailroom::IngressGate decides by the listener a connection arrived on). Both bind loopback only.
+# `rails server -b/-p`, PORT and Thruster replace these binds, which is why bin/mailroom-server starts
+# Puma directly, and why production refuses to start on anything else (the check below).
+internal_port = ENV.fetch("MAILROOM_PORT", "3100")
+public_port = ENV["MAILROOM_PUBLIC_PORT"].to_s.strip
+if public_port.empty?
+  # Development: one listener, the internal one.
+  port ENV.fetch("PORT", internal_port), "127.0.0.1"
+else
+  bind "tcp://127.0.0.1:#{internal_port}"
+  bind "tcp://127.0.0.1:#{public_port}"
+end
+
+# In production, refuse to listen anywhere but the two loopback listeners: once on the configured binds
+# before anything is opened, and again on the sockets Puma actually opened.
+require_relative "listener_check"
+Puma::Plugins.register("mailroom_listeners", Class.new(Puma::Plugin) do
+  def start(launcher)
+    return unless [ launcher.options[:environment], ENV["RAILS_ENV"] ].include?("production")
+    refuse = ->(problem) { abort "Mailroom refuses to start: #{problem}" if problem }
+    refuse.call(Mailroom::ListenerCheck.problem(launcher.options[:binds]))
+    launcher.events.after_booted do
+      refuse.call(Mailroom::ListenerCheck.problem(launcher.binder.ios.map { |io| Mailroom::ListenerCheck.bind_for(io) }))
+    end
+  end
+end)
+plugin :mailroom_listeners
+
+# Postmark accepts inbound mail with up to 35 MB of attachments. Its JSON carries them twice: base64 in
+# the Attachments array (~47 MB) and again inside RawEmail with MIME line breaks and JSON escaping
+# (~49 MB), plus the decoded bodies. 100 MB covers that; Puma answers 413 above it, before spooling the
+# body to disk or calling the app. Chunked bodies are counted as they arrive.
+http_content_length_limit 100 * 1024 * 1024
+
+# Puma 8.0.2 lib/puma/server.rb:491-501 uses first_data_timeout for incomplete requests,
+# including bodies; :321-328 resets it after every incomplete read. This bounds idle time,
+# not total upload time: a steady trickle can still retain a tempfile indefinitely.
+# :515-535 uses persistent_timeout while waiting for the next keep-alive request (even if
+# partially read); the next incomplete reactor read switches to first_data_timeout.
+# lib/puma/client.rb:194-206,350-352 closes the tempfile when the client times out.
+first_data_timeout 10
+persistent_timeout 5
 
 # Allow puma to be restarted by `bin/rails restart` command.
 plugin :tmp_restart

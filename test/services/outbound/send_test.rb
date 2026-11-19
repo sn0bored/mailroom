@@ -17,6 +17,70 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
+  test "a stale draft cannot queue a message that was already sent" do
+    stale = OutboundMessage.find(@record.id)
+    perform_enqueued_jobs(only: OutboundDeliveryJob) { Outbound::Send.call(@record) }
+    assert_equal "sent", @record.reload.status
+
+    assert_no_difference("ActionMailer::Base.deliveries.size") do
+      assert_no_enqueued_jobs do
+        error = assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(stale) }
+        assert_equal "message is no longer a draft", error.message
+      end
+    end
+    assert_equal "sent", @record.reload.status
+  end
+
+  test "a stale draft cannot queue a message that is already queued" do
+    stale = OutboundMessage.find(@record.id)
+    Outbound::Send.call(@record)
+    assert_no_enqueued_jobs do
+      assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(stale) }
+    end
+    assert_equal "queued", @record.reload.status
+  end
+
+  test "enqueue failure does not roll back a message that has started delivery" do
+    queue_down = ->(*) do
+      OutboundMessage.where(id: @record.id).update_all(status: "sending")
+      raise SolidQueue::Job::EnqueueError, "queue down"
+    end
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record) }
+    end
+    assert_equal "sending", @record.reload.status
+    assert_nil @record.error
+  end
+
+  test "enqueue failure does not remove a new message that has started delivery" do
+    record = OutboundMessage.new(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
+    queue_down = ->(id) do
+      OutboundMessage.where(id: id).update_all(status: "sending")
+      raise SolidQueue::Job::EnqueueError, "queue down"
+    end
+    OutboundDeliveryJob.stub(:perform_later, queue_down) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(record) }
+    end
+    assert_equal "sending", record.reload.status
+  end
+
+  test "enqueue stamping preserves a claim acquired by another delivery job" do
+    enqueue = OutboundDeliveryJob.method(:perform_later)
+    claimed_job = nil
+    during_enqueue = ->(id, &block) do
+      claimed_job = OutboundDeliveryJob.new(id)
+      claimed_job.stub(:record_sent, ->(*) { }) { claimed_job.perform_now }
+      enqueue.call(id, &block)
+    end
+    OutboundDeliveryJob.stub(:perform_later, during_enqueue) { Outbound::Send.call(@record) }
+    assert_equal "sending", @record.reload.status
+    assert_equal claimed_job.job_id, @record.delivery_job_id
+    assert_equal 1, @record.delivery_attempt
+    assert_no_difference("ActionMailer::Base.deliveries.size") do
+      perform_enqueued_jobs(only: OutboundDeliveryJob)
+    end
+  end
+
   test "unknown inactive and disabled sender domains are denied" do
     @record.from_address = "sender@example.net"
     assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(@record) }
@@ -47,6 +111,47 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
+  test "a built message is stored only when the rules pass" do
+    refused = OutboundMessage.new(from_address: "sender@example.net", to_addresses: [ "recipient@example.net" ])
+    assert_raises(Outbound::Send::NotAllowed) { Outbound::Send.call(refused) }
+    assert refused.new_record?
+
+    accepted = OutboundMessage.new(from_address: "Example Sender <sender@example.org>", to_addresses: [ "recipient@example.net" ])
+    assert_enqueued_jobs(1, only: OutboundDeliveryJob) { Outbound::Send.call(accepted) }
+    assert accepted.persisted?
+    assert_equal "queued", accepted.reload.status
+  end
+
+  test "a new message whose enqueue fails is removed and the error re-raised" do
+    record = OutboundMessage.new(from_address: "sender@example.org", to_addresses: [ "recipient@example.net" ])
+    OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
+      assert_no_difference("OutboundMessage.count") do
+        error = assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(record) }
+        assert_kind_of SolidQueue::Job::EnqueueError, error.cause
+      end
+    end
+  end
+
+  test "an owner draft whose enqueue fails stays a draft and carries the error" do
+    user = User.create!(email_address: "owner@example.org", password: "test-password")
+    OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record, actor: user) }
+    end
+    @record.reload
+    assert_equal "draft", @record.status
+    assert_equal "could not queue for delivery: SolidQueue::Job::EnqueueError", @record.error
+    assert OutboundMessage.drafts.include?(@record)
+  end
+
+  test "an existing message goes back to the status it had, not to draft" do
+    @record.update!(status: "queued")
+    OutboundDeliveryJob.stub(:perform_later, false) do
+      assert_raises(Outbound::Send::NotQueued) { Outbound::Send.call(@record) }
+    end
+    assert_equal "queued", @record.reload.status
+    assert_equal "could not queue for delivery: ActiveJob::EnqueueError", @record.error
+  end
+
   test "user actor persists for the asynchronous audit" do
     user = User.create!(email_address: "owner@example.org", password: "test-password")
     Outbound::Send.call(@record, actor: user)
@@ -67,12 +172,30 @@ class OutboundSendTest < ActiveSupport::TestCase
     end
   end
 
-  test "probe requires a configured and enabled sender" do
-    Mailroom.stub(:forward_sender, nil) do
-      assert_equal "no sender configured", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+  test "probe requires a configured and enabled sender and leaves no draft when refused" do
+    assert_no_difference "OutboundMessage.count" do
+      Mailroom.stub(:forward_sender, nil) do
+        assert_equal "no sender configured", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+      end
+      Mailroom.stub(:forward_sender, "sender@example.net") do
+        assert_match "probe sender's domain", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+      end
     end
-    Mailroom.stub(:forward_sender, "sender@example.net") do
-      assert_match "probe sender's domain", assert_raises(Outbound::Send::NotAllowed) { Outbound::Probe.call(@domain) }.message
+  end
+
+  test "a probe whose enqueue fails leaves no row" do
+    Mailroom.stub(:forward_sender, "sender@example.org") do
+      OutboundDeliveryJob.stub(:perform_later, ->(*) { raise SolidQueue::Job::EnqueueError, "queue down" }) do
+        assert_no_difference("OutboundMessage.count") do
+          assert_raises(Outbound::Send::NotQueued) { Outbound::Probe.call(Domain.create!(name: "example.net")) }
+        end
+      end
+    end
+  end
+
+  test "probe accepts a sender with a display name" do
+    Mailroom.stub(:forward_sender, "Mailroom <sender@example.org>") do
+      assert_equal "queued", Outbound::Probe.call(Domain.create!(name: "example.net")).status
     end
   end
 end

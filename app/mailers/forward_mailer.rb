@@ -1,9 +1,17 @@
 class ForwardMailer < ApplicationMailer
   ATTACHMENT_BUDGET = 9.megabytes
+  UNVERIFIED_TAG = "[unverified sender]"
+  BANNER_STYLE = "font-family:sans-serif;font-size:13px;line-height:1.4;color:#222;background:#f4f4f4;" \
+                 "border:1px solid #ccc;padding:8px 12px;margin:0 0 16px"
   layout false
 
+  # The copy comes from the owner's own domain, so it must never let a stranger's mail pass for mail
+  # that domain vouches for: both parts name the original sender, the HTML is sanitized, and a sender
+  # whose domain did not authenticate is tagged in the subject.
   def copy(record)
-    text = "Received for #{record.to_address} on #{record.received_at}\nFrom: #{record.display_from}\n\n#{record.body_text}"
+    auth = record.sender_authentication
+    text = provenance_rows(record, auth).map { |label, value| "#{label}: #{value}" }.join("\n")
+    text += "\n\n#{record.body_text}"
     total = 0
     items = record.attachments.to_a
     items.each_with_index do |attachment, index|
@@ -14,12 +22,16 @@ class ForwardMailer < ApplicationMailer
       end
       attachments[attachment.filename.to_s] = { mime_type: attachment.content_type, content: attachment.download }
     end
-    html = original_html(record)
-    headers["X-Mailroom-Instance"] = Mailroom.instance_id
+    html = forwarded_html(record, auth)
+    message_id = new_message_id(Mailroom.forward_sender)
+    headers["Message-ID"] = message_id
+    headers[LoopMarker::HEADER] = LoopMarker.stamp(message_id)
     headers["X-Mailroom-Message-Id"] = record.id.to_s
     headers["X-Mailroom-Original-To"] = record.to_address
+    subject = "[#{record.domain.name}] #{record.subject}"
+    subject = "#{UNVERIFIED_TAG} #{subject}" if auth.failed?
     mail(from: Mailroom.forward_sender, to: record.domain.forward_target,
-      subject: "[#{record.domain.name}] #{record.subject}", reply_to: record.from_address,
+      subject: subject, reply_to: record.from_address,
       message_stream: Mailroom.forward_stream) do |format|
       format.text { render plain: text }
       format.html { render html: html.html_safe } if html.present?
@@ -27,6 +39,36 @@ class ForwardMailer < ApplicationMailer
   end
 
   private
+
+  # Banner plus sanitized original, or nil to forward the text part alone (no HTML, or sanitizing failed).
+  def forwarded_html(record, auth)
+    html = original_html(record)
+    return nil if html.blank?
+    clean = Rails::HTML5::SafeListSanitizer.new.sanitize(html, scrubber: ForwardHtmlScrubber.new)
+    clean.present? ? provenance_banner(record, auth) + %(<div style="overflow:hidden;position:relative">#{clean}</div>) : nil
+  rescue StandardError
+    nil
+  end
+
+  def provenance_banner(record, auth)
+    rows = provenance_rows(record, auth)
+    lines = rows.map { |label, value| "#{label}: #{ERB::Util.html_escape(value)}" }
+    %(<div style="#{BANNER_STYLE}"><strong>Forwarded by Mailroom</strong><br>#{lines.join('<br>')}</div>)
+  end
+
+  def provenance_rows(record, auth)
+    rows = [
+      [ "From", Mcp::Frame.mailbox(record.from_name, record.from_address) ],
+      [ "To", record.to_address ],
+      [ "Date", (record.sent_at || record.received_at).to_s ]
+    ]
+    rows << [ "Warning", "This message has #{auth.from_count} From headers" ] if auth.from_count > 1
+    if auth.known?
+      domain = record.from_address.to_s.split("@").last.to_s.downcase
+      rows << [ "Sender check", auth.summary(domain: domain) ]
+    end
+    rows.map { |label, value| [ label, Mcp::Frame.single_line(value) ] }
+  end
 
   def original_html(record)
     return nil unless record.has_html?

@@ -4,6 +4,8 @@
   <%= form.label :from_address, "From" %><%= form.email_field :from_address, required: true, aria: { describedby: "draft-from-help" } %>
   <p id="draft-from-help" class="help">Use an address on a domain with sending enabled.</p>
   <%= form.label :to, "To (comma separated)" %><%= form.text_field :to, value: @draft.to_addresses.join(", "), required: true %>
+  <%= form.label :cc, "Cc (comma separated)" %><%= form.text_field :cc, value: @draft.cc_addresses.join(", ") %>
+  <%= form.label :bcc, "Bcc (comma separated)" %><%= form.text_field :bcc, value: @draft.bcc_addresses.join(", ") %>
   <%= form.label :subject %><%= form.text_field :subject %>
   <%= form.label :text_body, "Message" %><%= form.text_area :text_body, rows: 14 %>
   <%= form.submit "Save draft" %>
