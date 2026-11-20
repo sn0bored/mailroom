@@ -36,7 +36,7 @@ Everything else you can do yourself.
 
 ### 1. Requirements
 
-Ruby 3.3 (rbenv or rvm), SQLite 3, git. On macOS: `brew install rbenv ruby-build && rbenv install 3.3.4`.
+Ruby 3.3 (rbenv or rvm), SQLite 3, git. On macOS: `brew install rbenv ruby-build && rbenv install 3.3.14` (3.3.14 or later: earlier 3.3 releases have CVE-2026-132825).
 
 ### 2. Clone and install
 
